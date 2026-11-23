@@ -12282,7 +12282,7 @@ class TestWeb(WebBase):
                  "rings": [{"ring": "infra", "server": "b", "path": "the LAN"}]}]
         with mock.patch.object(self.c, "unlock_picture", lambda: rows):
             body = self.ask("/unlock")[1]
-        self.assertIn("Switch auto-unlock off", body)
+        self.assertIn("Auto-unlock off", body)
         tok = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
         saved, started = [], []
         with mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": saved.append((host, changes)) or ["unlock"]), \
@@ -16677,8 +16677,14 @@ class TestRecovery(Base):
         self.assertEqual(rows["quince"]["way"], "not encrypted")
         rc, out, err = self.run_cli("unlock", self.network().path)
         self.assertEqual(rc, 0, err)
-        self.assertIn("papaya  by itself, with 1 of: infra (lychee)", out)
-        self.assertIn("after a power cut: opens, as long as lychee starts too", out)
+        self.assertIn("papaya  Unlocked by lychee", out)                          # the machines, not the rings
+        self.assertIn("After a power cut everything comes back unlocked, as long as lychee starts", out)
+        self.assertEqual(unlock.line({"way": "by itself", "rings": [{"ring": "a", "server": "x", "path": "the LAN"},
+                                      {"ring": "b", "server": "y", "path": "the LAN"}], "threshold": 2, "auto": True}),
+                         "Unlocked by 2 of x and y together")
+        self.assertEqual(unlock.line({"way": "by a person (auto-unlock off)", "auto": False,
+                                      "rings": [{"ring": "a", "server": "x", "path": "the LAN"}]}),
+                         "Unlocked by you (auto-unlock off): Unlock, or its key at boot")
         rc, out, err = self.run_cli("unlock", self.network().path, "--porcelain")
         self.assertEqual(sorted(m["name"] for m in json.loads(out)["machines"]), ["lychee", "papaya", "quince", "sorbet"])
 

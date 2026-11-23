@@ -1266,33 +1266,69 @@ def picture(fleet, roles, ms):
                      "threshold": int(cfg.get("threshold") or 1) if rings else 0,
                      "rings": rings, "openers": who_opens, "needs": sorted(needs.get(h.name, [])),
                      "power_cut": "waits" if h.name in stuck else "opens" if rings else ""})
+    for r in rows:
+        r["line"] = line(r)
+        r["attention"] = r["power_cut"] == "waits" and r.get("auto", True) and bool(r["rings"])
     return rows
 
 
+def _either(names, word="or"):
+    names = list(names)
+    return names[0] if len(names) == 1 else "%s %s %s" % (", ".join(names[:-1]), word, names[-1])
+
+
+def line(r):
+    """How a machine's disk opens, in one sentence a person reads: the machines, not the rings (the
+    owner, 23 Nov 2026: "by itself, with 1 of… dafuq is this trying to tell me?")."""
+    way = r["way"]
+    if way == "not encrypted":
+        return "Not encrypted"
+    if way == "in RAM":
+        return "Runs in memory: nothing to unlock"
+    if not r["rings"]:
+        return "Unlocked by you: Unlock, or its key at boot"
+    if not r.get("auto", True):
+        return "Unlocked by you (auto-unlock off): Unlock, or its key at boot"
+    who = []
+    for x in r["rings"]:
+        w = "this computer" if x["server"] == "operator" else (x["server"] or "nobody")
+        if w not in who:
+            who.append(w)
+    n = int(r.get("threshold") or 1)
+    s = ("Unlocked by %s" % _either(who) if n <= 1 or len(who) == 1
+         else "Unlocked by %d of %s together" % (n, _either(who, "and")))
+    if any(x["path"] != "the LAN" for x in r["rings"]):
+        s += ", through a tunnel"
+    return s
+
+
+def summary(rows):
+    """(state, sentence): what a power cut of everything does, once for the whole network."""
+    waits = [r["name"] for r in rows if r.get("attention")]
+    if waits:
+        return "bad", "After a power cut, %s wait%s for you: no machine that could unlock %s is up." % (
+            _either(waits, "and"), "s" if len(waits) == 1 else "", "it" if len(waits) == 1 else "them")
+    first = sorted({m for r in rows for m in r.get("needs") or []})
+    if first:
+        return "ok", ("After a power cut everything comes back unlocked, as long as %s start%s: %s need%s no "
+                      "unlocking, and the others unlock each other from there." % (
+                          _either(first, "and"), "s" if len(first) == 1 else "", "it" if len(first) == 1 else "they",
+                          "s" if len(first) == 1 else ""))
+    return "ok", "After a power cut everything comes back unlocked."
+
+
 def say_picture(rows, out=print):
-    """The rows in words, a few lines per machine."""
+    """The rows in words: one line per machine, and what a power cut does."""
     width = max([len(r["name"]) for r in rows] + [6])
     for r in rows:
-        if not r["rings"]:
-            out("%-*s  %s" % (width, r["name"], r["way"]))
-            continue
-        out("%-*s  %s, with %d of: %s" % (width, r["name"], r["way"], r["threshold"],
-                                       ", ".join("%s (%s)" % (x["ring"], x["server"] or "?") for x in r["rings"])))
-        far = [x for x in r["rings"] if x["path"] != "the LAN"]
-        if far:
-            out("%-*s  reached through: %s" % (width, "", "; ".join("%s: %s" % (x["ring"], x["path"]) for x in far)))
-        if r["power_cut"] == "waits":
-            out("%-*s  after a power cut: waits for a person" % (width, ""))
-        elif r["needs"]:
-            out("%-*s  after a power cut: opens, as long as %s start%s too"
-                % (width, "", " and ".join(r["needs"]), "s" if len(r["needs"]) == 1 else ""))
-        else:
-            out("%-*s  after a power cut: opens, also with one of its rings' machines off" % (width, ""))
+        out("%-*s  %s" % (width, r["name"], r["line"]))
+    out("")
+    out(summary(rows)[1])
 
 
 # ---- openers (docs/design/unlock.md): who opens the way for a machine away from home ------------
 def _encrypted(host):
-    return _way(host) in ("by itself", "by a person")
+    return _way(host).startswith(("by itself", "by a person"))      # auto-unlock off is still encrypted
 
 
 def openers(host, servers):

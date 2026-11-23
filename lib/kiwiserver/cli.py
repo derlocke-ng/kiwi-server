@@ -6494,7 +6494,7 @@ def cmd_unlock(args):
     if not args.host:                   # who opens whom (docs/design/unlock.md)
         rows = unlock.picture(fleet, roles, ms)
         if args.porcelain:
-            print(json.dumps({"machines": rows}, indent=2))
+            print(json.dumps({"machines": rows, "summary": list(unlock.summary(rows))}, indent=2))
         else:
             unlock.say_picture(rows)
         return

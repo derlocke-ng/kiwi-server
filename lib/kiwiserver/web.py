@@ -1650,27 +1650,21 @@ onsubmit="return confirm('{{ a.label }} now? It goes on with the copy there; whe
 
 TEMPLATES["unlock.html"] = """{% extends "base.html" %}{% block main %}
 <p><a href="/">← Home</a></p><h1>Disk unlock</h1>
-<p class="muted">Who opens whom: how each machine's disk opens at boot, with which rings, and whether it comes
-back by itself after a power cut.</p>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
-{% for m in machines %}<div class="card"><p><strong>{{ m.name }}</strong> · {{ m.way }}{% if m.rings %}, with {{ m.threshold }} of
-{{ m.rings|length }} {{ "ring" if m.rings|length == 1 else "rings" }}{% endif %}</p>
-{% if m.rings %}<form class="inline" method="post" action="/unlock/{{ m.name }}/opens">{{ tok }}<input type="hidden"
-name="opens" value="{{ 'by-a-person' if m.auto else 'by-itself' }}"><button>{{ "Switch auto-unlock off" if m.auto else
-"Switch auto-unlock on" }}</button></form> <span class="muted small">an apply of {{ m.name }}: its rings are
-{{ "unbound; it waits for its key or Unlock" if m.auto else "bound again" }}</span>
-{% if m.can_window %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action" value="window">
-<input type="hidden" name="host" value="{{ m.name }}"><button>Opens by itself for {{ m.window }} minutes</button></form>
-<span class="muted small">then restart it: if it waits at boot meanwhile, the control node types its key</span>{% endif %}
-<ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
-{{ r.path }}{% endif %}</li>{% endfor %}</ul>
-<p class="small"><span class="dot {{ 'warn' if m.power_cut == 'waits' or m.needs else 'ok' }}"></span>After a power cut:
-{% if m.power_cut == "waits" %}it waits for a person.{% elif m.needs %}it opens, as long as {{ m.needs|join(" and ") }} {{ "starts" if m.needs|length == 1 else "start" }} too.
-{% else %}it opens, also with one of its rings' machines off.{% endif %}</p>{% endif %}</div>{% endfor %}
-<p class="muted small">A ring answers anyone who reaches it: for a machine that is off or stolen, switching
-auto-unlock off is no protection; <em>New keys</em> for its rings is (kiwi-server rotate ring). Change a machine's rings
-in its Settings (Disk unlock). In a terminal:
-<code>kiwi-server unlock &lt;fleet&gt;</code>.</p>
+{% if said %}<p class="banner {{ 'ok' if said[0] == 'ok' else 'bad' }}">{{ said[1] }}</p>{% endif %}
+{% for m in machines %}<div class="card"><div class="row"><span><strong>{{ m.name }}</strong>
+{% if m.attention %}<span class="state warn">waits after a power cut</span>{% endif %}<br>
+<span class="muted">{{ m.line or m.way }}</span></span>
+{% if m.rings %}<span>{% if m.can_window %}<form class="inline" method="post" action="/run">{{ tok }}<input type="hidden" name="action"
+value="window"><input type="hidden" name="host" value="{{ m.name }}"><button title="Restart it right after: if it waits at boot
+meanwhile, the control node types its key">For {{ m.window }} min</button></form>{% endif %}
+<form class="inline" method="post" action="/unlock/{{ m.name }}/opens">{{ tok }}<input type="hidden" name="opens"
+value="{{ 'by-a-person' if m.auto else 'by-itself' }}"><button>{{ "Auto-unlock off" if m.auto else "Auto-unlock on" }}</button></form></span>{% endif %}</div>
+{% if m.rings %}<details class="small muted"><summary>Its rings</summary><ul>{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
+{{ r.path }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}</div>{% endfor %}
+<p class="muted small">Auto-unlock off does not protect a machine that is off or stolen (a ring answers anyone who
+reaches it): <em>New keys</em> for its rings does (kiwi-server rotate ring). A machine's rings are in its Settings
+(Disk unlock). In a terminal: <code>kiwi-server unlock &lt;fleet&gt;</code>.</p>
 {% endblock %}"""
 
 
@@ -3900,11 +3894,13 @@ def make_app(control: Control):
         """Who opens whom (docs/design/unlock.md): read only, from the fleet."""
         if not user(request):
             return login_page()
+        from . import unlock as unlockmod
         try:
             machines, error = control.unlock_picture(), None
         except (KiwiError, OSError) as e:
             machines, error = [], "The picture could not be made: %s" % e
-        return page("unlock.html", request, "/unlock", machines=machines, error=error)
+        said = unlockmod.summary(machines) if machines else None
+        return page("unlock.html", request, "/unlock", machines=machines, error=error, said=said)
 
     @app.post("/unlock/{name}/opens")
     def unlock_opens(request: Request, name: str, opens: str = Form(""), csrf: str = Form("")):
@@ -3919,7 +3915,7 @@ def make_app(control: Control):
             control.save_settings(name, {("unlock", "opens"): opens}, user=u)
             jid = control.start("apply", [name], user=u)
         except KiwiError as e:
-            return page("unlock.html", request, "/unlock", machines=control.unlock_picture(), error=str(e))
+            return page("unlock.html", request, "/unlock", machines=control.unlock_picture(), error=str(e), said=None)
         return RedirectResponse("/jobs/" + jid, status_code=303)
 
     @app.get("/api/unlock")

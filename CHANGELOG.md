@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.307.2 — Disk unlock in plain words
+
+- **Disk unlock** (app, page, `kiwi-server unlock FLEET`) says who unlocks each machine, by the
+  machines' names: "Unlocked by papaya, lychee or medlar", "Unlocked by you (auto-unlock off)",
+  "Not encrypted". What a power cut does is said once, on top, not on every machine; a warning
+  only where a machine would wait. The rings are behind a fold. The owner, 23 Nov 2026: "by
+  itself, with 1 of… what is this trying to tell me?"
+- A machine with auto-unlock off still counts as encrypted for openers (2.307.0 left it out).
+
 ## 2.307.1 — opens by itself for a while
 
 - With auto-unlock off, **Opens by itself for N minutes** (the page's and the app's Disk unlock;

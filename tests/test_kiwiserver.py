@@ -112,6 +112,8 @@ class Base(unittest.TestCase):
              "downloader": {"download_dir": "/mnt/dl", "transmission_password": "t"},
              "sftp": {"sftp_password": "s"}}
         d.update(extra)
+        if "modules" not in d:          # a gateway with downloads and SFTP (no longer in the gateway preset)
+            d["modules"] = ["vpn-client", "dns", "dhcp-relay", "reverse-proxy", "downloader", "gateway", "portainer", "sftp"]
         return d
 
     def master(self, **extra):
@@ -2392,16 +2394,18 @@ class TestModules(Base):
             self.spec("gate", role="master", **{"master": self.master(**{"vpn-server": {"wg_host": "v", "wg_password": "w", "groups": "nope"}})})
 
     def test_node_role_presets_and_port_collisions(self):
-        host, role, spec = self.spec("n", role="node", **{"node": self.node_gw(preset="gateway")})
-        self.assertEqual(host.modules, self.roles["node"].presets["gateway"]["modules"])
+        gw = {k: v for k, v in self.node_gw(preset="gateway").items() if k not in ("modules", "downloader", "sftp")}
+        host, role, spec = self.spec("n", role="node", **{"node": gw})
+        # a gateway: no downloads, no SFTP (the owner, 23 Nov 2026: a gateway does not need them)
+        self.assertEqual(host.modules, ["vpn-client", "dns", "dhcp-relay", "reverse-proxy", "gateway", "portainer"])
         self.assertTrue(host.module_settings["dns"]["expose_web_ui"])     # the preset's module default
         host, role, spec = self.spec("n", role="node", **{"node": self.node_cloud(preset="cloud")})
         self.assertEqual(host.modules, ["vpn-client", "reverse-proxy", "cloud", "vault", "portainer"])
         b = modmod.Renderer(self.ms).render(spec)
         self.assertIn("kn-vault", b.compose["services"])
         # Pi-hole's web UI on Portainer's port: an error at render, not at the second `up`
-        both = self.node_gw(preset="gateway", modules=self.roles["node"].presets["gateway"]["modules"] + ["cloud", "vault"],
-                            cloud={"admin_password": "a"})
+        both = self.node_gw(preset="gateway", modules=self.roles["node"].presets["gateway"]["modules"]
+                            + ["downloader", "sftp", "cloud", "vault"], cloud={"admin_password": "a"})
         both["dns"] = dict(both["dns"], web_ui_port=9443)
         host, role, spec = self.spec("n", role="node", **{"node": both})
         with self.assertRaisesRegex(KiwiError, "host port 9443/tcp is published by both"):

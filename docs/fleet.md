@@ -34,7 +34,7 @@ hosts:
   m1:                              # a gateway node
     role: node
     node:
-      preset: gateway                # vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp
+      preset: gateway                # vpn-client, dns, dhcp-relay, reverse-proxy, gateway, portainer
       vpn_ip: 10.8.0.6
       pub_iface: eth0
       vpn-client: { wireguard_config: secrets/m1.home.conf }   # the client config wg-easy issued (optional:

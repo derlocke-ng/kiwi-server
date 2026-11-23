@@ -42,6 +42,7 @@ FLEET = {
             "dns": {"pihole_password": "golden-pihole-master"}, "reverse-proxy": dict(TLS)}},
         "m1": {"role": "node", "node": {
             "preset": "gateway", "pub_iface": "eth0",
+            "modules": ["vpn-client", "dns", "dhcp-relay", "reverse-proxy", "downloader", "gateway", "portainer", "sftp"],
             "dns": {"pihole_password": "golden-pihole-m1"},
             "downloader": {"download_dir": "/mnt/dl", "transmission_password": "golden-transmission"},
             "sftp": {"sftp_password": "golden-sftp"}, "reverse-proxy": dict(TLS)}},

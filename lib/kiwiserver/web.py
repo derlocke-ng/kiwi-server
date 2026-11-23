@@ -2491,8 +2491,7 @@ def make_app(control: Control):
             if not m.get("name"):
                 m["name"] = setupmod.free_name("node", taken | {a.get("master_name")})
             taken.add(m["name"])
-            if m.get("preset") != "gateway":
-                m.pop("download_dir", None)
+            m.pop("download_dir", None)         # an old answer: a gateway has no downloads since 2.306.2
             a["nodes"].append(m)
         return a
 

@@ -12,9 +12,9 @@ node_type: node
 settings_include: [common/stack]
 presets:
   gateway:
-    title: LAN gateway and download station
-    description: The home's DNS (Pi-hole with DHCP), route into the mesh and through the VPN, Transmission and JDownloader behind nginx, Portainer, SFTP.
-    modules: [vpn-client, dns, dhcp-relay, reverse-proxy, downloader, gateway, portainer, sftp]
+    title: LAN gateway
+    description: The home's DNS (Pi-hole with DHCP), route into the mesh and through the VPN, nginx, Portainer. Downloads (downloader) and SFTP are modules to add.
+    modules: [vpn-client, dns, dhcp-relay, reverse-proxy, gateway, portainer]
     module_defaults:
       dns: { expose_web_ui: true }
   cloud:

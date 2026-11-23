@@ -17,7 +17,7 @@ run on the master if you want it there; none does by default.
 |---|---|---|
 | `bare` | the base system: admin user, SSH, updates | — |
 | `master` | the kiwi-master: WireGuard entry point (wg-easy) whose default route is the VPN client (gluetun to Mullvad or any provider — the double hop), Pi-hole and Tor on the server's network stack, isolated-client subnet; nginx for the admin pages and to hand public names on to the nodes. It keeps no data of yours | vpn-client, vpn-server, dns, tor |
-| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway and download station (Pi-hole with DHCP, policy routing through the VPN, Transmission and JDownloader fail-closed in the VPN client's namespace, nginx, Portainer, SFTP); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
+| `node` | a kiwi-node: any module set behind the VPN client. `preset: gateway` is the LAN gateway (Pi-hole with DHCP, policy routing through the VPN, nginx, Portainer; downloads and SFTP are the modules `downloader` and `sftp`, added where wanted); `preset: cloud` is Nextcloud and Vaultwarden behind nginx; `preset: minimal` is the VPN client and nginx to build on | per preset; `modules:` replaces the list |
 | `node-gw`, `node-cloud` | the gateway and cloud presets as roles of their own, for fleet files that use them | as above |
 
 The presets are the live kiwi-master, kiwi-node-gw and kiwi-cloud setups

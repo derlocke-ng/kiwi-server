@@ -53,7 +53,7 @@ keeps the backups.
 | Machine | Runs | For |
 |---|---|---|
 | `sorbet`, the master | as above | as above |
-| `lime`, a node with the `gateway` preset | Pi-hole, routing through its VPN client, a download station (Transmission, JDownloader) | ad blocking and names for the LAN, the LAN's traffic through the VPN; the downloads have no Internet while the tunnel is down |
+| `lime`, a node with the `gateway` preset | Pi-hole, routing through its VPN client | ad blocking and names for the LAN, the LAN's traffic through the VPN |
 | `papaya`, a node | Nextcloud, Immich, Paperless, Vaultwarden, the `backup` module | the services and their data |
 | `lychee`, a node | the `backup-server` module on a big disk | papaya's backups, every night, encrypted with restic |
 | TV, phones, laptops at home | nothing extra | they use `lime` as DNS server and gateway |

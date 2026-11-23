@@ -163,6 +163,9 @@ DEFAULTS = {
         # the Tang rings that may open this machine's disk at boot (the tang module serves them)
         "rings": [],
         "threshold": 1,
+        # how it opens (docs/design/unlock.md): by-itself, its rings open it; by-a-person, its rings
+        # stay named but are not bound, and it waits for its key or Open now (auto-unlock off)
+        "opens": "by-itself",
         "via": {},        # ring -> URL, where the LAN is not the way to it
         "ssh": False,     # an SSH server in the initramfs, for `kiwi-server unlock`
         "ssh_from": [],   # where it may be used from (CoreOS only: Dropbear has no from=)
@@ -625,6 +628,8 @@ class Host:
         u = c["unlock"]
         if not isinstance(u.get("rings"), list):
             errs.append("unlock.rings must be a list of ring names")
+        if u.get("opens", "by-itself") not in ("by-itself", "by-a-person"):
+            errs.append("unlock.opens is by-itself or by-a-person")
         elif u["rings"]:
             if not isinstance(u.get("threshold"), int) or not 1 <= u["threshold"] <= len(u["rings"]):
                 errs.append("unlock.threshold must be between 1 and the number of rings")

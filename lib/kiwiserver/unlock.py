@@ -400,7 +400,15 @@ class OperatorRing:
 
 
 def wanted(host):
-    return bool(host.cfg["unlock"].get("rings"))
+    """Its disk is bound to rings: it names some, and it opens by itself (unlock.opens)."""
+    u = host.cfg["unlock"]
+    return bool(u.get("rings")) and u.get("opens", "by-itself") != "by-a-person"
+
+
+def waits_for_a_person(host):
+    """Auto-unlock switched off: rings named, not bound; its key or Open now opens it."""
+    u = host.cfg["unlock"]
+    return bool(u.get("rings")) and u.get("opens") == "by-a-person"
 
 
 def control_rings(host):
@@ -1188,7 +1196,7 @@ def _way(host):
     if host.target == "coreos-ram":
         return "in RAM"
     if cfg.get("rings"):
-        return "by itself"
+        return "by a person (auto-unlock off)" if cfg.get("opens") == "by-a-person" else "by itself"
     d = host.cfg.get("debian") or {}
     if host.target == "debian" and (d.get("encrypt") or d.get("partitioning") == "crypto"):
         return "by a person"            # encrypted, no ring: its key at the screen or over SSH
@@ -1253,7 +1261,8 @@ def picture(fleet, roles, ms):
                 path = "the master's relay"
             rings.append({"ring": r, "server": getattr(server, "name", None) if not isinstance(server, OperatorRing)
                           else "operator", "path": path})
-        rows.append({"name": h.name, "way": _way(h), "threshold": int(cfg.get("threshold") or 1) if rings else 0,
+        rows.append({"name": h.name, "way": _way(h), "auto": wanted(h),
+                     "threshold": int(cfg.get("threshold") or 1) if rings else 0,
                      "rings": rings, "openers": who_opens, "needs": sorted(needs.get(h.name, [])),
                      "power_cut": "waits" if h.name in stuck else "opens" if rings else ""})
     return rows

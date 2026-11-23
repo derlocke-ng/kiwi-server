@@ -48,11 +48,17 @@ L: days. New ideas go to the end of their section.
 11. The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person). M
 12. An upgrade rehearsal drill: the previous release on a throwaway VM, data, the new one, `check`. M
-13. A local AI (docs/design/ai.md, the owner, 23 Nov 2026; a priority: it helps him go through
+14. Disk unlock as the owner asked (23 Nov 2026: "enable/disable it for certain clients, auto-unlock on
+    a timer, 5 min for my gaming workstation, a separate ring for dev devices"; docs/design/unlock.md).
+    Built (2.307.0): auto-unlock on/off per machine (`unlock.opens`), on the page and in the app.
+    Next: a window, the control node opens a waiting machine for the next N minutes; then desktops
+    (the Bluefin disk of lemonaide's workstation, dev devices with a ring of their own) with the
+    auto-unlock and emergency rings, which needs item 10. M-L
+13. ~~A local AI (docs/design/ai.md, the owner, 23 Nov 2026; a priority: it helps him go through
     his data before the move): the `ai` module with Unsloth Studio (web UI and OpenAI API) on LAN
     and/or VPN, its tools off; a machine that is off on purpose (`on_demand`) shown as no problem;
     `kiwi-server ai bench` to compare models; `ai connect` for opencode. Waits for the owner's
-    settings (GPU, models). L
+    settings (GPU, models). L~~ Done (2.306.0-2.306.3): lemonaide, an RX 9070 XT, runs Studio.
 
 ## 2. Smaller, no decision needed
 

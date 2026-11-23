@@ -1655,12 +1655,18 @@ back by itself after a power cut.</p>
 {% if error %}<p class="banner bad">{{ error }}</p>{% endif %}
 {% for m in machines %}<div class="card"><p><strong>{{ m.name }}</strong> · {{ m.way }}{% if m.rings %}, with {{ m.threshold }} of
 {{ m.rings|length }} {{ "ring" if m.rings|length == 1 else "rings" }}{% endif %}</p>
-{% if m.rings %}<ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
+{% if m.rings %}<form class="inline" method="post" action="/unlock/{{ m.name }}/opens">{{ tok }}<input type="hidden"
+name="opens" value="{{ 'by-a-person' if m.auto else 'by-itself' }}"><button>{{ "Switch auto-unlock off" if m.auto else
+"Switch auto-unlock on" }}</button></form> <span class="muted small">an apply of {{ m.name }}: its rings are
+{{ "unbound; it waits for its key or Unlock" if m.auto else "bound again" }}</span>
+<ul class="small">{% for r in m.rings %}<li>{{ r.ring }} on {{ r.server or "nobody" }}{% if r.path != "the LAN" %}:
 {{ r.path }}{% endif %}</li>{% endfor %}</ul>
 <p class="small"><span class="dot {{ 'warn' if m.power_cut == 'waits' or m.needs else 'ok' }}"></span>After a power cut:
 {% if m.power_cut == "waits" %}it waits for a person.{% elif m.needs %}it opens, as long as {{ m.needs|join(" and ") }} {{ "starts" if m.needs|length == 1 else "start" }} too.
 {% else %}it opens, also with one of its rings' machines off.{% endif %}</p>{% endif %}</div>{% endfor %}
-<p class="muted small">Change a machine's rings in its Settings (Disk unlock). In a terminal:
+<p class="muted small">A ring answers anyone who reaches it: for a machine that is off or stolen, switching
+auto-unlock off is no protection; <em>New keys</em> for its rings is (kiwi-server rotate ring). Change a machine's rings
+in its Settings (Disk unlock). In a terminal:
 <code>kiwi-server unlock &lt;fleet&gt;</code>.</p>
 {% endblock %}"""
 
@@ -3896,6 +3902,22 @@ def make_app(control: Control):
         except (KiwiError, OSError) as e:
             machines, error = [], "The picture could not be made: %s" % e
         return page("unlock.html", request, "/unlock", machines=machines, error=error)
+
+    @app.post("/unlock/{name}/opens")
+    def unlock_opens(request: Request, name: str, opens: str = Form(""), csrf: str = Form("")):
+        """Auto-unlock on or off for one machine (unlock.opens): into the fleet file, then an apply binds
+        or unbinds its rings."""
+        u = posted(request, csrf)
+        if not u:
+            return login_page()
+        try:
+            if opens not in ("by-itself", "by-a-person"):
+                raise KiwiError("auto-unlock on or off?")
+            control.save_settings(name, {("unlock", "opens"): opens}, user=u)
+            jid = control.start("apply", [name], user=u)
+        except KiwiError as e:
+            return page("unlock.html", request, "/unlock", machines=control.unlock_picture(), error=str(e))
+        return RedirectResponse("/jobs/" + jid, status_code=303)
 
     @app.get("/api/unlock")
     def api_unlock(request: Request):

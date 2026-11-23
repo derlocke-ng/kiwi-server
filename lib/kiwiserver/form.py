@@ -135,6 +135,10 @@ BASE_GROUPS = [
              help="The unlock rings (the tang module on other machines) that open this machine's encrypted disk at boot, "
                   "by name, space separated. Empty: someone types the passphrase or presses Unlock",
              doc="docs/security.md"),
+        dict(path=("unlock", "opens"), type="enum", label="Opens", options=["by-itself", "by-a-person"], default="by-itself",
+             help="by-itself: its rings open it at boot. by-a-person: auto-unlock off; its rings stay named, and it waits "
+                  "for its key, Unlock (Open now) or kiwi-server unlock. Changing it takes an apply",
+             doc="docs/design/unlock.md"),
         dict(path=("unlock", "threshold"), type="int", label="…how many of them", default=1,
              help="1: any one ring opens it. 2: two of them have to answer"),
         dict(path=("unlock", "via"), type="map", label="…reached through", default={},

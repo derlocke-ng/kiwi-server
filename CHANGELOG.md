@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.307.0 — auto-unlock on and off per machine
+
+- **Disk unlock, per machine** (docs/design/unlock.md): `unlock.opens: by-a-person` switches
+  auto-unlock off. Its rings stay named but are unbound at the next apply, and it waits for its
+  key or **Unlock**; switched on again, they are bound again. A switch per machine on the control
+  page's Disk unlock and in the app's (saved, then that machine is applied), and in its settings.
+- Secure Boot's hint names the BIOS route when the firmware refuses fwupd's db update (its KEK
+  holds no Microsoft key, as on an ASUS board).
+
 ## 2.306.4 — one History; backups and Secure Boot said plainly
 
 - **One History** (the app and the control page alike): a machine's History was three lists, its

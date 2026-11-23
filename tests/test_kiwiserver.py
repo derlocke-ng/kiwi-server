@@ -11966,7 +11966,7 @@ class TestWeb(WebBase):
                 break
             time.sleep(0.05)
         self.assertIn("ran rotate %s ssh" % self.f.path, self.ask("/api" + where + "/log")[1])
-        self.assertIn("Replacing the SSH keys", self.ask("/activity")[1])
+        self.assertIn("Replaced the SSH keys", self.ask("/activity")[1])      # done: said as done
         code, where = self.ask("/run", {"action": "rotate-seed", "csrf": tok})
         self.assertEqual(code, 303)
         for _ in range(100):
@@ -12007,7 +12007,7 @@ class TestWeb(WebBase):
         self.assertEqual(code, 200)
         self.assertIn("Applying to a", body)                                      # in words, not a command name
         for path, has in (("/devices", "Add a phone or laptop"), ("/backups", "The network itself"),
-                          ("/help", "The words"), ("/activity", "Applying to"), ("/controllers", "Add a computer")):
+                          ("/help", "The words"), ("/activity", "Applied"), ("/controllers", "Add a computer")):
             code, body = self.ask(path)
             self.assertEqual(code, 200, path)
             self.assertIn(has, body)
@@ -12126,6 +12126,10 @@ class TestWeb(WebBase):
         self.assertIn('class="on">History</a>', body)
         self.assertIn("did not work", body)
         self.assertNotIn("j2", body)                                             # another machine's
+        self.assertIn("show=problems", body)                                     # one list, with its filters
+        failed = '<span class="state failed">did not work</span>'                 # the entry, not the header's chip
+        self.assertIn(failed, self.ask("/hosts/papaya?tab=history&show=problems")[1])
+        self.assertNotIn(failed, self.ask("/hosts/papaya?tab=history&show=backups")[1])
         self.assertNotIn("Changes nothing.", body)                               # the overview is its own tab
         self.assertIn("Save now", self.ask("/hosts/papaya?tab=backups")[1])
         self.assertIn('class="on">Overview</a>', self.ask("/hosts/papaya?tab=nonsense")[1])
@@ -17016,3 +17020,37 @@ class TestLockedStoreWrites(unittest.TestCase):
         os.symlink(os.path.join(tmp, "open"), os.path.join(tmp, "secrets"))
         util.write_text(os.path.join(tmp, "secrets", "luks", "x.key"), "k\n", 0o600)
         self.assertTrue(os.path.isfile(os.path.join(tmp, "open", "luks", "x.key")))
+
+
+class TestTimeline(unittest.TestCase):
+    """One History (kiwiserver.timeline): the machine's journal, the control node's tasks and its log,
+    each thing once (the owner, 23 Nov 2026: the same things shown twice, in lists that said little)."""
+
+    def test_each_thing_once_newest_first_with_who_and_why(self):
+        from kiwiserver import timeline
+        own = [{"time": "2026-11-23T08:36:04+01:00", "what": "a backup ran", "kind": "backup"},
+               {"time": "2026-11-23T08:34:02+01:00", "what": "a backup failed", "kind": "failed",
+                "detail": "create repository … 401 Unauthorized"},
+               {"time": "2026-11-23T04:51:01+01:00", "what": "applied: kiwi-server 2.306.1, from desk", "kind": "apply"},
+               {"time": "2026-11-23T03:34:26+00:00", "what": "started", "kind": "boot"}]
+        jobs = [{"id": "j1", "action": "apply", "hosts": ["rockpi"], "state": "ok", "started": "2026-11-23T04:50:10+01:00",
+                 "user": "anna"}]
+        log = [{"time": "2026-11-23T04:50:09+01:00", "user": "anna", "what": "apply", "hosts": ["rockpi"], "result": "ok"}]
+        items = timeline.merge(own=own, jobs=jobs, log=log)
+        self.assertEqual([i["what"] for i in items], ["A backup ran", "A backup failed", "Applied", "Started"])
+        applied = items[2]
+        self.assertEqual((applied["who"], applied["job"], applied["detail"]), ("anna", "j1", "Applied (kiwi-server 2.306.1)"))
+        self.assertEqual(timeline.badge(items[1]), "did not work")
+        self.assertEqual(items[1]["detail"], "create repository … 401 Unauthorized")
+        self.assertEqual(timeline.badge(items[0]), "")                  # done says nothing
+        self.assertEqual([i["what"] for i in timeline.keep(items, "problems")], ["A backup failed"])
+        self.assertEqual([i["what"] for i in timeline.keep(items, "backups")], ["A backup ran", "A backup failed"])
+        self.assertEqual([i["what"] for i in timeline.keep(items, "changes")], ["Applied"])
+        now = timeline._ts("2026-11-24T10:00:00+01:00")
+        self.assertEqual([d for d, _ in timeline.by_day(items, now=now)], ["Yesterday"])
+
+    def test_an_apply_from_a_terminal_alone_keeps_the_machines_words(self):
+        from kiwiserver import timeline
+        items = timeline.merge(own=[{"time": "2026-11-23T04:51:01+01:00", "what": "applied: kiwi-server 2.306.1, from desk",
+                                     "kind": "apply"}])
+        self.assertEqual((items[0]["what"], items[0]["who"]), ("Applied (kiwi-server 2.306.1)", "desk"))

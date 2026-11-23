@@ -17,7 +17,8 @@ python3 -c "import sys; sys.path.insert(0, '$here'); import madeup; print(madeup
 cat > "$r/bin/kiwi-server" <<STAND
 #!/bin/bash
 case "\${1:-}" in
-    list|status|secrets|onion) exec python3 "$here/madeup.py" "\$@" ;;
+    list|status|secrets|onion|history) exec python3 "$here/madeup.py" "\$@" ;;
+    control) if [ "\${2:-}" = activity ]; then exec python3 "$here/madeup.py" "\$@"; else exec "$root/bin/kiwi-server" "\$@"; fi ;;
     agent) exit 1 ;;     # no resident one: every read goes to the made-up answers above
     *) exec "$root/bin/kiwi-server" "\$@" ;;
 esac

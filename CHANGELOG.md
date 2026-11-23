@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.306.4 — one History; backups and Secure Boot said plainly
+
+- **One History** (the app and the control page alike): a machine's History was three lists, its
+  own journal, the control node's tasks and its log, and one apply showed up in all three. Now it
+  is one list, each thing once, by day, newest first, with who did it, and **Changes**, **Backups**
+  and **Problems** to narrow it down. The network's Activity is the same list for all machines. A
+  failed update or backup says why: the last error it wrote.
+- **A backup server takes every machine that backs up to it**: its `clients` list and every
+  machine whose `backup.servers` names it. rockpi backed up to lychee, which did not list it, and
+  was refused every night without a word.
+- **Secure Boot's missing 2023 certificate** is its own warning with the way out (fwupd's Secure
+  Boot database update, or a firmware update), not a bare failed `bootloader-update.service`.
+- A machine's starts are read as exact times where its journal can (no time zone to guess).
+
 ## 2.306.3 — the local AI's login is listed
 
 - `kiwi-server logins`, the control page and the app list Studio's login (user `unsloth`)

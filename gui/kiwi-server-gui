@@ -2587,60 +2587,71 @@ class ActivityDialog(Adw.Dialog):
              "boot": "started", "failed": "failed"}
 
     def show(self, got, why, own=None):
+        """One list (kiwiserver.timeline, as on the control page): the machine's own journal, the
+        control node's tasks and its log, each thing once, newest first, by day."""
+        from kiwiserver import timeline
+        self.got, self.why, self.own = got, why, own
         tb = Adw.ToolbarView()
         hb = Adw.HeaderBar()
         again = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Ask again")
         again.connect("clicked", lambda *_: self.load())
         hb.pack_start(again)
+        chips = Gtk.Box(css_classes=["linked"])
+        first = None
+        for key, label in timeline.FILTERS:
+            b = Gtk.ToggleButton(label=label, active=key == getattr(self, "which", "all"))
+            if first is None:
+                first = b
+            else:
+                b.set_group(first)
+            b.connect("toggled", lambda btn, k=key: btn.get_active() and self.pick(k))
+            chips.append(b)
+        hb.set_title_widget(chips)
         tb.add_top_bar(hb)
-        if got is None:
-            tb.set_content(Adw.StatusPage(title="The control node did not tell", description=why,
-                                          icon_name="dialog-information-symbolic"))
-            self.set_child(tb)
-            return False
-        page = Adw.PreferencesPage()
-        if own is not None:
-            g = Adw.PreferencesGroup(title="On the machine", description="What %s itself remembers of the last 30 days: "
-                                     "applies, updates, what its runbook did, backups, starts." % self.host)
-            for e in own[:120]:
-                row = plain_row(e.get("what") or "", (e.get("time") or "")[:16].replace("T", " "))
-                row.add_suffix(Gtk.Label(label=self.KINDS.get(e.get("kind"), e.get("kind") or ""),
-                                         css_classes=["error" if e.get("kind") == "failed" else "dim-label"]))
-                g.add(row)
-            if not own:
-                g.add(plain_row("Nothing in its journal."))
-            page.add(g)
-        g = Adw.PreferencesGroup(title="Tasks", description="What the control node did or does, newest first.")
-        jobs = [j for j in got.get("jobs") or [] if self.mine(j)]
-        entries = [e for e in got.get("entries") or [] if self.mine(e)]
-        for j in jobs:
-            when = (j.get("started") or j.get("id") or "")[:16].replace("T", " ")
-            title = ("%s %s" % (self.VERBS.get(j.get("action"), j.get("action") or ""), " ".join(j.get("hosts") or []))).strip()
-            row = plain_row(title, "%s · %s" % (when, j.get("user") or ""))
-            row.add_suffix(Gtk.Label(label=self.STATE.get(j.get("state"), j.get("state") or ""),
-                                     css_classes=["error" if j.get("state") == "failed" else "dim-label"]))
-            g.add(row)
-        if not jobs:
-            g.add(plain_row("None since its page was last unlocked."))
-        page.add(g)
-        g = Adw.PreferencesGroup(title="Log", description="What was done to %s, and by whom." % self.host if self.host
-                                 else "Who did what there: on its page, or from a computer.")
-        for e in entries:
-            sub = "%s · %s" % ((e.get("time") or "")[:16].replace("T", " "), e.get("user") or "")
-            if e.get("address"):
-                sub += " · %s" % e["address"]
-            what = self.VERBS.get(e.get("what"), e.get("what") or "")
-            row = plain_row(("%s %s" % (what, " ".join(e.get("hosts") or []))).strip(), sub)
-            if e.get("result"):                 # how a task ended: as the machine's History on the page says it
-                row.add_suffix(Gtk.Label(label=self.STATE.get(e["result"], e["result"]),
-                                         css_classes=["error" if e["result"] == "failed" else "dim-label"]))
-            g.add(row)
-        if not entries:
-            g.add(plain_row("Empty."))
-        page.add(g)
-        tb.set_content(page)
+        self.items = timeline.merge(own=own, jobs=[j for j in (got or {}).get("jobs") or [] if self.mine(j)],
+                                    log=[e for e in (got or {}).get("entries") or [] if self.mine(e)])
+        self.scroll = Gtk.ScrolledWindow(vexpand=True)
+        tb.set_content(self.scroll)
         self.set_child(tb)
+        self.fill()
         return False
+
+    def pick(self, which):
+        self.which = which
+        self.fill()
+
+    def fill(self):
+        from kiwiserver import timeline
+        page = Adw.PreferencesPage()
+        missing = []
+        if self.got is None:
+            missing.append("The control node did not answer (%s): what was done through it is not here." % self.why)
+        if self.host and self.own is None:
+            missing.append("%s did not answer: what it remembers itself is not here." % self.host)
+        if missing:
+            g = Adw.PreferencesGroup()
+            for m in missing:
+                g.add(plain_row(m))
+            page.add(g)
+        shown = timeline.keep(self.items, getattr(self, "which", "all"))
+        for day, entries in timeline.by_day(shown):
+            g = Adw.PreferencesGroup(title=day)
+            for i in entries[:150]:
+                title = i["what"] if self.host or not i.get("hosts") else "%s %s" % (i["what"], ", ".join(i["hosts"]))
+                sub = " · ".join(x for x in (timeline.clock(i), i["who"]) if x)
+                if i["detail"]:
+                    sub += "\n" + i["detail"]
+                row = plain_row(title, sub)
+                row.set_subtitle_lines(3)
+                word = timeline.badge(i)
+                if word:
+                    row.add_suffix(Gtk.Label(label=word, css_classes=["error" if i["state"] == "failed" else "dim-label"]))
+                g.add(row)
+            page.add(g)
+        if not shown:
+            page.add(Adw.StatusPage(title="Nothing here", description="Nothing of this kind in the last 30 days."
+                                    if self.host else "Nothing of this kind since the control node was last unlocked."))
+        self.scroll.set_child(page)
 
 
 class AccountsDialog(Adw.Dialog):
@@ -3285,6 +3296,13 @@ try:
     import kiwi_icon  # noqa: E402
 except ImportError:
     kiwi_icon = None
+# kiwiserver's plain helpers the page uses too (timeline): installed beside kiwi_icon.py, in a
+# checkout in lib/ next to gui/
+for _d in (os.path.join(_HERE, "..", "lib", "kiwi-server"), os.path.join(_HERE, "..", "lib")):
+    if os.path.isdir(os.path.join(_d, "kiwiserver")):
+        if os.path.realpath(_d) not in map(os.path.realpath, sys.path):
+            sys.path.insert(0, _d)
+        break
 # The job strip with the filling kiwi, and the output pane: kiwi-template's kit (gui/kit/, a copy
 # pinned in VENDORED, never edited here). Without it the app keeps its plain progress bar.
 try:

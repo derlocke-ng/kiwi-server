@@ -79,7 +79,8 @@ systemctl enable kiwi-reboot-if-required.timer"""
 # has for the card. On an image's first start it takes effect at once; on a running board that is
 # being adopted over SSH with the next restart, so the session and the apply after it stay.
 _NETWORK = r"""
-dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+dev=%(iface)s
+[ -n "$dev" ] || dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 if [ -n "$dev" ] && systemctl is-active -q systemd-networkd; then
     install -d /etc/systemd/network
     printf '%%s\n' '# kiwi-server: the fixed address of this machine, as the fleet file says (network.address)' \
@@ -105,6 +106,9 @@ def network_script(host, now=False):
         return ""
     dns = [str(d) for d in net.get("dns") or []]
     return _NETWORK % {
+        # the card the fleet file names (network.interface: a board with two ports), else the one of
+        # the default route
+        "iface": shlex.quote(str(net.get("interface") or "")),
         "address": shlex.quote(str(net["address"])), "gateway": shlex.quote(str(net["gateway"])),
         "dns": " ".join(shlex.quote("DNS=" + d) for d in dns), "dns_nm": shlex.quote(" ".join(dns)),
         "now": "networkctl reload 2>/dev/null || systemctl restart systemd-networkd" if now else ":",

@@ -29,10 +29,12 @@ DEBIAN_PACKAGES = "clevis clevis-luks clevis-initramfs"
 PREPARE_DEBIAN = r'''
 set -eu
 IFS= read -r ip
+IFS= read -r want_dev || true      # network.interface, or nothing
 if ! dpkg -s clevis-initramfs >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q %s >/dev/null
 fi
-dev=$(ip -4 route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+dev=$want_dev
+[ -n "$dev" ] || dev=$(ip -4 route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
 [ -n "$dev" ] || { echo "no default route to take the interface from" >&2; exit 1; }
 want="IP=$(printf %%s "$ip" | sed "s/IFACE/$dev/")"
 f=/etc/initramfs-tools/conf.d/kiwi-unlock
@@ -935,7 +937,8 @@ def bind(host, tgt, servers, force=False):
     if not key:
         raise KiwiError("%s: unlock: is set but the disk's key is not on record (secrets/luks/%s.key)" % (host.name, host.name))
     wanted_tree = tree(host, servers)
-    if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n").encode()):
+    iface = str((host.cfg.get("network") or {}).get("interface") or "")     # a board with two ports: the one named
+    if not coreos and b"updated" in remote.run(tgt, PREPARE_DEBIAN, (_ip_setting(host) + "\n" + iface + "\n").encode()):
         util.say("%s: the initramfs now brings up the network at boot" % host.name)
     changed = _rebind(host, tgt, key, wanted_tree, force=force)
     if not coreos and b"removed" in remote.run(tgt, REMOVE_KEY_ONLY):

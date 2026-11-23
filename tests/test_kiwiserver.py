@@ -6990,7 +6990,7 @@ class TestUnlock(Base):
         with a, b:
             unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f))
         prepare = next(c for c in calls if "update-initramfs" in c[1])
-        self.assertEqual(prepare[2], b"192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n")
+        self.assertEqual(prepare[2], b"192.168.2.61::192.168.2.1:255.255.0.0::IFACE:off\n\n")      # and network.interface: none
         self.assertIn("clevis-initramfs", prepare[1])
 
     def test_what_is_already_bound_stays(self):

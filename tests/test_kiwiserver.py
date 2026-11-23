@@ -12254,6 +12254,25 @@ class TestWeb(WebBase):
             self.assertEqual(self.ask("/hosts/a/quiet", {"key": "disk-plain"})[0], 303)       # no form of this session
             self.assertEqual(len(saved), 1)
 
+    def test_auto_unlock_is_switched_on_the_disk_unlock_page(self):
+        """The owner, 23 Nov 2026: where do I switch auto-unlock per machine? On Disk unlock: saved,
+        then that machine is applied."""
+        self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
+        rows = [{"name": "a", "way": "by itself", "auto": True, "threshold": 1, "openers": [], "needs": [], "power_cut": "opens",
+                 "rings": [{"ring": "infra", "server": "b", "path": "the LAN"}]}]
+        with mock.patch.object(self.c, "unlock_picture", lambda: rows):
+            body = self.ask("/unlock")[1]
+        self.assertIn("Switch auto-unlock off", body)
+        tok = re.search(r'name="csrf" value="([^"]+)"', body).group(1)
+        saved, started = [], []
+        with mock.patch.object(self.c, "save_settings", lambda host, changes, user="admin": saved.append((host, changes)) or ["unlock"]), \
+                mock.patch.object(self.c, "start", lambda action, hosts=(), user="admin", **kw: started.append((action, list(hosts))) or "j9"):
+            code, where = self.ask("/unlock/a/opens", {"opens": "by-a-person", "csrf": tok})[:2]
+            self.assertEqual((code, where), (303, "/jobs/j9"))
+            self.assertEqual((saved, started), ([("a", {("unlock", "opens"): "by-a-person"})], [("apply", ["a"])]))
+            self.ask("/unlock/a/opens", {"opens": "by-a-person"})                  # no form of this session
+            self.assertEqual(len(saved), 1)
+
     def test_module_sources_are_added_updated_and_removed_on_the_page(self):
         self.assertEqual(self.ask("/modules")[0], 303)                              # a login first
         self.assertEqual(self.ask("/login", {"password": self.PW})[0], 303)
@@ -16642,6 +16661,22 @@ class TestRecovery(Base):
         self.assertIn("after a power cut: opens, as long as lychee starts too", out)
         rc, out, err = self.run_cli("unlock", self.network().path, "--porcelain")
         self.assertEqual(sorted(m["name"] for m in json.loads(out)["machines"]), ["lychee", "papaya", "quince", "sorbet"])
+
+    def test_auto_unlock_switched_off_keeps_the_rings_named_and_binds_none(self):
+        """unlock.opens (docs/design/unlock.md; the owner, 23 Nov 2026: on and off per machine):
+        by-a-person keeps the rings named, binds none, and says so in the picture."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        f = self.network(papaya=dict(pap, unlock=dict(pap["unlock"], opens="by-a-person")))
+        h = f.hosts["papaya"]
+        self.assertFalse(unlock.wanted(h))
+        self.assertTrue(unlock.waits_for_a_person(h))
+        rows = {r["name"]: r for r in unlock.picture(f, self.roles, self.ms)}
+        self.assertEqual((rows["papaya"]["way"], rows["papaya"]["auto"]), ("by a person (auto-unlock off)", False))
+        self.assertEqual([x["ring"] for x in rows["papaya"]["rings"]], ["infra"])          # still named
+        self.assertTrue(unlock.wanted(self.network().hosts["papaya"]))                   # the default: by itself
+        bad = self.network(papaya=dict(pap, unlock=dict(pap["unlock"], opens="sometimes")))
+        self.assertIn("unlock.opens is by-itself or by-a-person", " ".join(bad.hosts["papaya"].validate(self.roles)))
 
     def test_three_two_one_two_copies_one_elsewhere(self):
         rep, checks = self.report(self.network())

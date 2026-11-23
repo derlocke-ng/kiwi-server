@@ -400,7 +400,10 @@ HINTS = {
     "tunnel": "Apply the machine. If it stays, read the VPN client's log.",
     "secureboot-ca": "fwupd brings the certificate: on the machine, sudo fwupdmgr get-updates lists the Secure Boot "
                      "Signature Database update; sudo fwupdmgr update installs it, then a restart. A firmware (BIOS) "
-                     "update does too. It adds the 2023 certificate and keeps the 2011 one.",
+                     "update does too. It adds the 2023 certificate and keeps the 2011 one. When fwupd's write "
+                     "is refused (Permission denied), the firmware takes changes signed by its maker only (its KEK has "
+                     "no Microsoft key, an ASUS board, 23 Nov 2026): in its setup, Secure Boot, Key Management, "
+                     "Restore Factory Keys after a BIOS update, or append the certificate to db from a USB stick.",
     "failed-units": "Their log and a restart are with the machine's services (the app, the control page, or kiwi-server service FLEET MACHINE NAME logs).",
     "crash-loop": "Its log says why it stops: kiwi-server service FLEET MACHINE NAME logs. A setting, a full disk or its data.",
     "disk-full": "Remove what is not needed there, or give the machine a bigger disk.",

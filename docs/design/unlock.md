@@ -23,12 +23,15 @@ than "always by itself". This design is the one place for all of it.
 
 | Way | What happens at boot | For |
 |---|---|---|
-| `by-itself` (now) | its rings open it, N of them | servers |
+| `by-itself` (built) | its rings open it, N of them | servers |
 | `by-a-person` | it waits: its key at its screen, `unlock --manual`, or **Open now** on the page or in the app | a machine that should never open alone |
 | `at-home` | its rings on its own LAN open it; anywhere else it asks for its passphrase | laptops, desktops (below: their policy) |
 
 - Switching the way is an apply: it binds or unbinds the rings (unbinding exists since 2.234).
-  `by-a-person` is "auto-unlock off".
+  `by-a-person` is "auto-unlock off". **Built (2.307.0)**: `by-itself` and `by-a-person`, switched on
+  the page's Disk unlock and in the app's (a switch per machine, then an apply of it), or in the
+  machine's settings. Next: a window ("opens by itself for the next N minutes", the owner's 5
+  minutes), then `at-home` and the desktops below.
 - A ring answers anyone who reaches it, so a machine that is **off or stolen** cannot be held
   by a switch: the answer there is `rotate ring NAME`, after which its old binding opens
   nothing. The page says so beside the switch.

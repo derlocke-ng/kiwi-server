@@ -197,6 +197,10 @@ BASE_GROUPS = [
              help="The unlock rings (the tang module on other machines) that open this machine's encrypted disk at boot, "
                   "by name, space separated. Empty: someone types the passphrase or presses Unlock",
              doc="docs/security.md"),
+        dict(path=("unlock", "opens"), type="enum", label="Opens", options=["by-itself", "by-a-person"], default="by-itself",
+             help="by-itself: its rings open it at boot. by-a-person: auto-unlock off; its rings stay named, and it waits "
+                  "for its key, Unlock (Open now) or kiwi-server unlock. Changing it takes an apply",
+             doc="docs/design/unlock.md"),
         dict(path=("unlock", "threshold"), type="int", label="…how many of them", default=1,
              help="1: any one ring opens it. 2: two of them have to answer"),
         dict(path=("unlock", "via"), type="map", label="…reached through", default={},
@@ -1465,10 +1469,25 @@ class UnlockDialog(Adw.Dialog):
                             valign=Gtk.Align.CENTER)
             img.add_css_class("warning" if m["power_cut"] == "waits" or m["needs"] else "success")
             row.add_prefix(img)
+            # auto-unlock on or off (unlock.opens): saved, then an apply binds or unbinds its rings
+            sw = Gtk.Switch(active=bool(m.get("auto")), valign=Gtk.Align.CENTER,
+                            tooltip_text="Opens by itself. Off: its rings stay named but unbound, and it waits for its key or Unlock")
+            sw.connect("notify::active", lambda s, _p, name=m["name"]: self.switch(name, s.get_active()))
+            row.add_suffix(sw)
             g.add(row)
         self.page.add(g)
+        note = Adw.PreferencesGroup(description="A ring answers anyone who reaches it: for a machine that is off or stolen, "
+                                                "auto-unlock off is no protection; New keys for its rings is (kiwi-server rotate ring).")
+        self.page.add(note)
         self.stack.set_visible_child_name("list")
         return False
+
+    def switch(self, name, on):
+        self.win.doc.set(name, ("unlock", "opens"), "by-itself" if on else "by-a-person")
+        if not self.win.save():
+            return
+        self.win.spawn(["apply", self.win.doc.path, name], "Applying %s: auto-unlock %s…" % (name, "on" if on else "off"))
+        self.close()
 
 
 class RecoveryDialog(Adw.Dialog):

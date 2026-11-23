@@ -180,6 +180,11 @@ A disk can open itself at boot. The `tang` module on one node serves a
 - A ring taken out of a machine's `unlock.rings` comes off its disk with the next
   apply too, once its key on record is checked to open that disk (since 2.234.0;
   before, the binding stayed and the disk still opened by the ring).
+- **Auto-unlock off** for one machine: `unlock.opens: by-a-person` (the switch on the control
+  page's Disk unlock, in the app's, or in its settings). Its rings stay named but are unbound at
+  the next apply; it waits for its key, **Unlock** or `kiwi-server unlock`. Switched on again,
+  the next apply binds them again. A ring answers anyone who reaches it, so for a machine that
+  is off or stolen this is no protection: `kiwi-server rotate ring NAME` is.
 - A machine cannot serve its own ring. The ring named `operator` is served
   from the machine running kiwi-server while it is needed, for what no other
   machine can open.

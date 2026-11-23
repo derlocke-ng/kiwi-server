@@ -422,6 +422,26 @@ class Renderer:
             if rs is not None and not rs.get("follow"):
                 rs["follow"] = bare
 
+    def fill_ai(self, host):
+        """ai.allow from ai.listen: lan, the machine's home network (from its fixed address); vpn,
+        the mesh. A machine on DHCP has no known home network: lan needs network.address."""
+        import ipaddress
+        a = host.module_settings["ai"]
+        if a.get("allow"):
+            return
+        allow = []
+        listen = [str(x) for x in (a.get("listen") or [])]
+        if "lan" in listen:
+            addr = str((host.cfg.get("network") or {}).get("address") or "")
+            if "/" not in addr:
+                raise KiwiError("%s: ai.listen lan: the machine's home network is known from network.address "
+                                "(with its prefix, like 192.168.2.40/24)" % host.name)
+            allow.append(str(ipaddress.ip_interface(addr).network))
+        if "vpn" in listen:
+            mesh = ((self.fleet.defaults.get("master") or {}).get("mesh_subnet")) or "10.8.0.0/16"
+            allow.append(str(mesh))
+        a["allow"] = allow
+
     def standby_endpoints(self):
         """address:WireGuard port:SSH port of the master, then of each of its standbys; [] without one."""
         master = next((h for h in self.fleet.hosts.values() if h.role in self.roles and not h.standby_of
@@ -772,6 +792,8 @@ class Renderer:
             host.module_settings["reverse-proxy"].setdefault("access", {})["admin"] = accessmod.admin_ranges(everyone)
         if "vip" in host.modules:
             self.fill_vip(host)     # the site's moving address: its pair, password, checks (basics-twice.md)
+        if "ai" in host.modules:
+            self.fill_ai(host)      # who reaches the local AI: its LAN, the VPN (docs/design/ai.md)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
@@ -4445,6 +4467,10 @@ def cmd_status(args):
                 return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "asleep", "locked": False,
                         "problems": [], "notes": ["asleep until %s (by its clock; Wake-on-LAN wakes it earlier)"
                                                   % asleepmod.window(h)[1]], "facts": {}}
+            if h.cfg.get("on_demand"):          # off unless someone wants it (a workstation's AI): its normal state
+                return {"host": h.name, "target": tgt, "ok": False, "output": str(e), "state": "asleep", "locked": False,
+                        "problems": [], "notes": ["off: it runs only when someone starts it (on_demand; Wake starts it)"],
+                        "facts": {}}
             at = unlock.waiting_at(h)
             if at:
                 e = "its disk is locked, the machine waits at %s: %s" % (at, unlock.locked_advice(h, args.fleet))
@@ -5639,6 +5665,31 @@ def cmd_history(args):
         print("  %s  %-8s %s" % (e["time"][:16].replace("T", " "), e["kind"], e["what"]))
 
 
+def cmd_ai(args):
+    """The local AI (docs/design/ai.md): its key into the store, opencode's provider block, a benchmark."""
+    from . import ai as aimod
+    fleet, _roles, _ms = load(args)
+    h = fleet.select([args.host])[0]
+    if "ai" not in (h.modules or []):
+        raise KiwiError("%s does not run the ai module" % h.name)
+    if args.what == "key":
+        key = sys.stdin.readline().strip() if not sys.stdin.isatty() else getpass.getpass("Its API key (from its page, Settings, API): ").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{16,200}", key):
+            raise KiwiError("that does not look like an API key")
+        util.write_text(aimod.key_path(fleet, h), key + "\n", 0o600)
+        util.say("%s: its API key is in the secret store (secrets/ai/%s.key)" % (h.name, h.name))
+        return
+    if args.what == "connect":
+        env, block = aimod.opencode_block(fleet, h, aimod.models(fleet, h))
+        print(json.dumps(block, indent=2))
+        util.say("for opencode: this into ~/.config/opencode/opencode.json, the key into %s, and the network's CA into "
+                 "NODE_EXTRA_CA_CERTS (%s)" % (env, shown_path(fleet.resolve_path("secrets/ca/kiwiCA.pem"))))
+        return
+    rows = aimod.bench(fleet, h, args.models or None)
+    if getattr(args, "porcelain", False):
+        print(json.dumps({"host": h.name, "rows": rows}))
+
+
 def cmd_disks(args):
     """The disks a machine has, as it sees them, and which of them hold data that is not
     mounted: with the line for `mounts` in the fleet file that puts it there."""
@@ -6670,6 +6721,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 one service of a machine's stack by hand, e.g. kn-nginx
   kiwi-server history <fleet> <host> [--days N]
                                                 what the machine itself remembers: applies, updates, its runbook, backups, starts
+  kiwi-server ai key|connect|bench <fleet> <host> [MODEL...]
+                                                the local AI: its API key, opencode's settings, a benchmark of its models
   kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
   kiwi-server remove <fleet> <host> [--yes]     a machine leaves for good: off the VPN, out of the fleet file
   kiwi-server connect <fleet> [--name N] [--remove]
@@ -7023,6 +7076,8 @@ def build_parser():
     s.add_argument("--raw", action="store_true", help="logs: every line as the machine has it, podman's too")
     s.add_argument("--save", metavar="FILE", help="logs: the full log into this file as well")
     s.add_argument("--ssh", metavar="USER@ADDR")
+    s = sub("ai", cmd_ai); s.add_argument("what", choices=["key", "connect", "bench"]); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("models", nargs="*", help="bench: these models only (default: every one it has)")
     s = sub("history", cmd_history); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--days", type=int, default=30, help="how far back (default 30)")
     s.add_argument("--ssh", metavar="USER@ADDR")

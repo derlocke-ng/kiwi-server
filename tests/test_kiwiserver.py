@@ -16890,3 +16890,56 @@ class TestRecovery(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocalAI(unittest.TestCase):
+    """kiwi-server ai (docs/design/ai.md): opencode's block, and the benchmark through a stand-in API."""
+
+    def host_and_fleet(self, tmp):
+        fleet = types.SimpleNamespace(dir=tmp, resolve_path=lambda p: os.path.join(tmp, p))
+        return fleet, types.SimpleNamespace(name="desk", hostname="desk.home", modules=["ai"])
+
+    def test_opencode_gets_the_models_and_the_key_from_the_environment(self):
+        from kiwiserver import ai
+        fleet, h = self.host_and_fleet(tempfile.mkdtemp())
+        env, block = ai.opencode_block(fleet, h, ["qwen3-14b", "gemma-3-12b"])
+        self.assertEqual(env, "KIWI_AI_DESK_KEY")
+        p = block["provider"]["kiwi-desk"]
+        self.assertEqual(p["options"], {"baseURL": "https://ai.desk.home/v1", "apiKey": "{env:KIWI_AI_DESK_KEY}"})
+        self.assertEqual(sorted(p["models"]), ["gemma-3-12b", "qwen3-14b"])
+
+    def test_the_benchmark_times_each_model_and_checks_the_known_answers(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        answers = {"17 multiplied": "391", "capital of Australia": "Canberra", "bloops": "Yes",
+                   "German": "Die Katze schläft auf dem Sofa.", "is_even": "def is_even(n):\n    return n % 2 == 0"}
+
+        class Stream:
+            def __init__(self, prompt):
+                text = next((a for k, a in answers.items() if k in prompt), "word " * 50)
+                self.lines = [("data: " + json.dumps({"choices": [{"delta": {"content": w}}]}) + "\n").encode()
+                              for w in re.findall(r"\S+\s*", text)]
+                self.lines += [("data: " + json.dumps({"choices": [], "usage": {"completion_tokens": len(self.lines)}}) + "\n").encode(),
+                               b"data: [DONE]\n"]
+
+            def __iter__(self):
+                return iter(self.lines)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def call(fleet, host, path, body=None, timeout=300, stream=False):
+            return Stream(body["messages"][0]["content"])
+        with mock.patch.object(ai, "_call", call):
+            rows = ai.bench(fleet, h, ["qwen3-14b"], say=lambda s: None)
+        self.assertEqual(rows[0]["tasks"], "5/5")
+        self.assertGreater(rows[0]["tokens_per_s"], 0)
+        with open(os.path.join(tmp, "ai-bench", "desk.jsonl")) as f:
+            self.assertEqual(json.loads(f.readline())["model"], "qwen3-14b")
+        with self.assertRaises(KiwiError) as e:
+            ai._call(fleet, h, "/v1/models")
+        self.assertIn("no API key on record", str(e.exception))

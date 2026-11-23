@@ -16968,3 +16968,20 @@ class TestLocalAI(unittest.TestCase):
         with self.assertRaises(KiwiError) as e:
             ai._call(fleet, h, "/v1/models")
         self.assertIn("no API key on record", str(e.exception))
+
+
+class TestLockedStoreWrites(unittest.TestCase):
+    """A write into secrets/ while the store is locked (its link gone) makes no plain folder beside
+    secrets.age: an apply that outlived the idle lock did, 23 Nov 2026."""
+
+    def test_no_secrets_folder_on_disk_while_the_store_is_locked(self):
+        tmp = tempfile.mkdtemp()
+        util.write_bytes(os.path.join(tmp, "secrets.age"), b"sealed", 0o600)
+        with self.assertRaisesRegex(KiwiError, "the secret store is locked"):
+            util.write_text(os.path.join(tmp, "secrets", "luks", "x.key"), "k\n", 0o600)
+        self.assertFalse(os.path.lexists(os.path.join(tmp, "secrets")))
+        util.write_text(os.path.join(tmp, "output", "x.txt"), "fine\n")        # elsewhere: as before
+        os.makedirs(os.path.join(tmp, "open"))                                  # the store open: its link is there
+        os.symlink(os.path.join(tmp, "open"), os.path.join(tmp, "secrets"))
+        util.write_text(os.path.join(tmp, "secrets", "luks", "x.key"), "k\n", 0o600)
+        self.assertTrue(os.path.isfile(os.path.join(tmp, "open", "luks", "x.key")))

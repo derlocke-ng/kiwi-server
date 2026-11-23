@@ -7,6 +7,9 @@
   asks where downloads go. Machines with their own module list keep theirs.
 - **The LAN cache** (kiwi-modules 0.123.1, 0.123.2): a layer that several images share and that expired
   was served empty, and a new machine could not pull nginx. The mirrors now fetch it again.
+- **The secret store stays open while a command runs**, and nothing writes a plain `secrets/` folder
+  beside `secrets.age` when it is locked: an apply that pulled a big image for longer than the idle
+  lock wrote two files (host keys, MAC addresses) into a new folder on disk.
 
 ## 2.306.1 — the local AI passes validate
 

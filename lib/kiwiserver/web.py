@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
-from . import VERSION, form as formmod, health as healthmod, machtable, play as playmod, providers as providersmod, site as sitemod, util
+from . import VERSION, form as formmod, health as healthmod, machtable, play as playmod, providers as providersmod, site as sitemod, timeline, util
 from .control import ACTIONS, Control
 
 controlmod_job = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")      # a job's id, as Control.start makes it
@@ -803,18 +803,15 @@ onsubmit="return confirm('Give {{ l.part }} to {{ l.ready_on }} now? It stops on
 <label for="mv_to">To the machine</label><select id="mv_to" name="to">{% for t in targets %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
 <div class="actions"><button>See what would happen</button></div></form>{% endif %}{% endif %}
 {% endif %}{% if tab == "history" %}
-<p class="muted">What was done to {{ m.name }}, newest first: from this page, the app or a terminal that went through here.</p>
-{% if own is not none %}<h2>On the machine</h2><p class="muted small">What {{ m.name }} itself remembers of the last 30 days:
-applies, updates, what its runbook did, backups, starts.</p>{% for e in own[:120] %}<div class="card row"><span>{{ e.what }}</span>
-<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · <span class="{{ 'bad' if e.kind == 'failed' else '' }}">{{ e.kind }}</span></span></div>
-{% else %}<p class="muted">Nothing in its journal.</p>{% endfor %}{% endif %}
-{% if jobs %}<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
-<b>{{ verb(j.action) }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div>
-<span class="muted small">{{ (ago(j.started) ~ " ago") if j.started else "not started yet" }} · {{ j.user }}</span></a>{% endfor %}{% endif %}
-<h2>Log</h2>{% for e in history %}<div class="card row"><span>{{ e.what }}{% if e.result %} <span class="state {{ e.result }}">{{ jobword(e.result) }}</span>{% endif %}
-{% if e.part %}<span class="muted">· {{ e.part }}</span>{% endif %}</span>
-<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · {{ e.user }}</span></div>
-{% else %}<p class="muted">Nothing yet.</p>{% endfor %}
+<p class="muted">What was done to {{ m.name }} and what it did, newest first: from this page, the app or a terminal,
+and what {{ m.name }} itself remembers of the last 30 days.</p>
+<nav class="tabs small">{% for k, label in show_filters %}<a href="?tab=history&show={{ k }}"{% if k == show %} class="on"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+{% if own is none %}<p class="muted small">{{ m.name }} did not answer: what it remembers itself is not here.</p>{% endif %}
+{% for day, entries in days %}<h2>{{ day }}</h2>{% for i in entries[:150] %}<div class="card row"><span>
+{% if i.job %}<a href="/jobs/{{ i.job }}">{{ i.what }}</a>{% else %}{{ i.what }}{% endif %}{% if badge(i) %} <span class="state {{ i.state }}">{{ badge(i) }}</span>{% endif %}
+{% if i.detail %}<br><span class="muted small">{{ i.detail }}</span>{% endif %}</span>
+<span class="muted small">{{ clock(i) }}{% if i.who %} · {{ i.who }}{% endif %}</span></div>{% endfor %}
+{% else %}<p class="muted">Nothing of this kind in the last 30 days.</p>{% endfor %}
 {% endif %}{% if tab == "backups" %}{% set b = m.facts.backup %}
 {% if "backup" in m.modules %}<div class="card"><div class="row"><strong>Its data</strong>
 {% if b and b.last %}<span class="state {{ 'ok' if b.age < 129600 else 'bad' }}">saved {{ age(b.age) }} ago</span>{% else %}<span class="state warn">no backup seen yet</span>{% endif %}</div>
@@ -1299,13 +1296,12 @@ you for a week gets a key for a week.</p>
 {% endblock %}""",
 
     "activity.html": """{% extends "base.html" %}{% block main %}
-<h1>Activity</h1><p class="muted">What was done here, by whom.</p>
-<h2>Tasks</h2>{% for j in jobs %}<a class="tile" href="/jobs/{{ j.id }}" style="margin:8px 0"><div class="row">
-<b>{{ verb(j.action) }} {{ j.hosts|join(" ") }}</b><span class="state {{ j.state }}">{{ jobword(j.state) }}</span></div></a>
-{% else %}<p class="muted">None since this page was last unlocked.</p>{% endfor %}
-<h2>Log</h2>{% for e in entries %}<div class="card row"><span>{{ e.what }} {{ (e.hosts or [])|join(" ") }}</span>
-<span class="muted small">{{ e.time[:16]|replace("T", " ") }} · {{ e.user }}{% if e.address %} · {{ e.address }}{% endif %}</span></div>
-{% else %}<p class="muted">Empty.</p>{% endfor %}
+<h1>Activity</h1><p class="muted">What was done here, by whom, newest first. A machine's own History is on its page.</p>
+<nav class="tabs small">{% for k, label in show_filters %}<a href="?show={{ k }}"{% if k == show %} class="on"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+{% for day, items in days %}<h2>{{ day }}</h2>{% for i in items[:150] %}<div class="card row"><span>
+{% if i.job %}<a href="/jobs/{{ i.job }}">{{ i.what }}</a>{% else %}{{ i.what }}{% endif %} {{ i.hosts|join(", ") }}{% if badge(i) %} <span class="state {{ i.state }}">{{ badge(i) }}</span>{% endif %}</span>
+<span class="muted small">{{ clock(i) }}{% if i.who %} · {{ i.who }}{% endif %}</span></div>{% endfor %}
+{% else %}<p class="muted">Nothing of this kind since this page was last unlocked.</p>{% endfor %}
 <div class="actions"><form class="inline" method="post" action="/lock"
 onsubmit="return confirm('Lock the network\\'s keys? Nothing is checked or done by itself until the next login.')">{{ tok }}<button>Lock the keys now</button></form></div>
 {% endblock %}""",
@@ -1675,14 +1671,7 @@ KIND = {"master": "Master", "node": "Home server (node)", "node-gw": "Home serve
 WORDS = {"ok": "fine", "warn": "wants a look", "bad": "has a problem", "down": "not reachable", "unknown": "not checked yet"}
 JOBWORD = {"waiting": "waiting", "running": "running", "ok": "done", "failed": "did not work"}
 FRESH = ("enroll", "build", "install", "invalid", "bare")      # a machine's phases before it is set up
-VERB = {"status": "Checking", "plan": "Previewing", "apply": "Applying to", "check": "Checking the names",
-        "backup": "Saving the network", "watch": "Looking for restarted masters", "save": "Saving the data of",
-        "update": "Updating every machine", "rotate": "Replacing the SSH keys", "setup": "Setting up", "build": "Making the install media of", "restore": "Bringing back on", "unlock": "Unlocking", "wake": "Waking", "remove": "Removing", "reboot": "Restarting", "poweroff": "Switching off",
-        "rotate-seed": "Replacing the secrets inside the services", "tell-test": "Sending a test message",
-        "rotate-ring": "Replacing the keys of an unlock ring",
-        "move": "Moving a part between", "switch": "Giving a part to its standby, from",
-        "start-new": "Starting a new backup history of", "prune": "Removing old snapshots on",
-        "doctor": "Checking the tools of this machine", "service": "Looking after a container on"}
+VERB = timeline.DOING        # what a task does, while it runs (timeline: also what it did)
 SERVICES = healthmod.SERVICES        # a service by the first part of its name, in plain words
 HINTS = (
     ("unreachable", "It did not answer. Is it switched on and online? After a restart, give it a minute, then check again."),
@@ -2917,8 +2906,12 @@ def make_app(control: Control):
         jobs = [j for j in control.jobs(40) if name in (j.get("hosts") or [])][:10]
         standby = [l for l in control.standby() if l.get("on") == name] if tab == "services" and m["keep_ready"] else []
         own = control.own_history(name) if tab == "history" else None     # what the machine itself remembers
+        show = request.query_params.get("show", "all")
+        show = show if show in dict(timeline.FILTERS) else "all"
+        days = timeline.by_day(timeline.keep(timeline.merge(own=own, jobs=jobs, log=mine), show)) if tab == "history" else []
         return page("host.html", request, "/", live=True, m=m, tiles=tiles([m]), logins=logins_of(_info, name), tab=tab,
                     chips=machine_chips(m, mine), history=mine[:60], jobs=jobs, standby=standby, own=own,
+                    days=days, show=show, show_filters=timeline.FILTERS, badge=timeline.badge, clock=timeline.clock,
                     targets=same_kind(m, ms) if tab == "services" else [], fresh=machtable.FRESH)
 
     def same_kind(m, ms):
@@ -3918,7 +3911,11 @@ def make_app(control: Control):
     def activity(request: Request):
         if not user(request):
             return login_page()
-        return page("activity.html", request, "/activity", live=True, jobs=control.jobs(15), entries=control.audit_tail(40))
+        show = request.query_params.get("show", "all")
+        show = show if show in dict(timeline.FILTERS) else "all"
+        days = timeline.by_day(timeline.keep(timeline.merge(jobs=control.jobs(40), log=control.audit_tail(200)), show))
+        return page("activity.html", request, "/activity", live=True, days=days, show=show, show_filters=timeline.FILTERS,
+                    badge=timeline.badge, clock=timeline.clock)
 
     @app.get("/audit")
     def audit():

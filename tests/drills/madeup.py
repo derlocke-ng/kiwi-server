@@ -11,7 +11,7 @@ GB = 1048576
 
 def facts(load, cpus, mem, disks, running, backup=None, up=400000):
     f = {"applied": "2026-11-15T06:10:00+00:00", "role_failed": "", "kernel": "6.17.7-200.fc43.x86_64", "clock_synced": True,
-         "clock_back": None, "fragmented": None, "skew": 0, "reboot": False, "failed_units": [], "kiwi_units": [{"name": "kiwi-stack-update", "active": "inactive", "sub": "dead"}, {"name": "kiwi-runbook", "active": "inactive", "sub": "dead"}], "runtime": "podman", "opened": {}, "partner_masters": {},
+         "clock_back": None, "fragmented": None, "skew": 0, "reboot": False, "failed_units": [], "secureboot_ca_missing": False, "kiwi_units": [{"name": "kiwi-stack-update", "active": "inactive", "sub": "dead"}, {"name": "kiwi-runbook", "active": "inactive", "sub": "dead"}], "runtime": "podman", "opened": {}, "partner_masters": {},
          "os": "Fedora CoreOS 43", "uptime": up, "load": [load, load, load], "cpus": cpus,
          "memory": {"total": mem[0] * GB, "available": int((mem[0] - mem[1]) * GB)},
          "disks": [{"mount": m, "size": s * GB, "used": int(u * GB)} for m, s, u in disks],
@@ -208,11 +208,50 @@ def hidden():
         {"host": "medlar", "service": "git", "site": "git.medlar.home", "address": "kiwi" + "b3" * 26 + ".onion", "clients": ["anna"]}]}
 
 
+def history(host):
+    """What a machine remembers (`history --porcelain`): a few days with an apply, updates, backups
+    (one refused, with its reason) and a start, in this computer's time."""
+    now = time.time()
+
+    def at(hours):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now - hours * 3600))
+    return {"host": host, "entries": [
+        {"time": at(0.4), "what": "a backup ran", "kind": "backup"},
+        {"time": at(0.5), "what": "a backup failed", "kind": "failed",
+         "detail": "create repository at rest:https://backup.lychee.home/%s.home/ failed: unexpected HTTP response (401)" % host},
+        {"time": at(5), "what": "applied: kiwi-server 2.306.3, from desk", "kind": "apply"},
+        {"time": at(5.2), "what": "started", "kind": "boot"},
+        {"time": at(26), "what": "the nightly update ran", "kind": "update"},
+        {"time": at(27), "what": "a backup ran", "kind": "backup"},
+        {"time": at(50), "what": "the nightly update ran", "kind": "update"},
+        {"time": at(51), "what": "a backup ran", "kind": "backup"}]}
+
+
+def activity():
+    """The control node's tasks and log (`control activity --porcelain`): an apply done from the page
+    (the same apply the machine remembers), a move running now, a restart."""
+    now = time.time()
+
+    def at(hours):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now - hours * 3600))
+    return {"jobs": [{"id": "j3", "action": "move", "hosts": ["papaya", "lychee"], "state": "running", "started": at(0.05), "user": "anna"},
+                     {"id": "j2", "action": "apply", "hosts": ["papaya"], "state": "ok", "started": at(5.01), "user": "anna"}],
+            "entries": [{"time": at(0.05), "user": "anna", "what": "move", "hosts": ["papaya", "lychee"], "part": "files"},
+                        {"time": at(5.01), "user": "anna", "what": "apply", "hosts": ["papaya"], "result": "ok"},
+                        {"time": at(30), "user": "bert", "address": "10.8.0.7", "what": "reboot", "hosts": ["lychee"], "result": "ok"}]}
+
+
 if __name__ == "__main__":          # as a stand-in for kiwi-server: madeup.py list|status|secrets|onion ...
     what = sys.argv[1] if len(sys.argv) > 1 else ""
     listed, status = answers()
     if what == "onion" and "--show" in sys.argv:        # a person's key, made up: what Tor Browser asks for
         print("MADEUPKEYFORPREVIEWONLY" + "A" * 29)
+        sys.exit(0)
+    if what == "history":
+        print(json.dumps(history(sys.argv[3] if len(sys.argv) > 3 else "papaya")))
+        sys.exit(0)
+    if what == "control" and "activity" in sys.argv:
+        print(json.dumps(activity()))
         sys.exit(0)
     print(json.dumps(listed if what == "list" else status if what == "status" else hidden() if what == "onion" else
                      {"store": True, "open": True} if what == "secrets" else {}))

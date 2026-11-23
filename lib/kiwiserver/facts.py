@@ -49,6 +49,8 @@ if [ -n "$bt" ] && mkdir -p /run/kiwi-server 2>/dev/null && [ -w /run/kiwi-serve
 fi
 if [ -e /run/reboot-required ] || [ -e /run/ostree/staged-deployment ]; then kv reboot yes; fi
 kv failed "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
+# bootupd holds the bootloader back when Secure Boot's db lacks Microsoft's 2023 UEFI CA (23 Nov 2026)
+kv secureboot_ca "$(systemctl is-failed -q bootloader-update.service 2>/dev/null && journalctl -b -u bootloader-update.service -o cat 2>/dev/null | grep -q 'UEFI CA 2023' && echo missing)"
 kv kiwi_units "$(systemctl list-units --all --no-legend --plain --type=service 'kiwi-*' 2>/dev/null | awk '{print $1":"$3":"$4}' | tr '\n' ' ')"
 luks=$(blkid -c /dev/null -t TYPE=crypto_LUKS -o device 2>/dev/null | head -n 1)
 if [ -n "$luks" ]; then kv luks "$(clevis luks list -d "$luks" 2>/dev/null | wc -l)"
@@ -335,7 +337,10 @@ def parse(data, local_now=None):
         "reboot": raw.get("reboot") == "yes",
         # a game server asleep whose stop ended with an error code of its own is no failure (Zandronum)
         "failed_units": [u for u in raw.get("failed", "").split() if not _HEALTHCHECK_UNIT.match(u)
-                         and u[:-len(".service")] not in {s["name"] for s in services if s["asleep"]}],
+                         and u[:-len(".service")] not in {s["name"] for s in services if s["asleep"]}
+                         and not (u == "bootloader-update.service" and raw.get("secureboot_ca") == "missing")],
+        # its own problem below, with the way out, not a bare failed unit
+        "secureboot_ca_missing": raw.get("secureboot_ca") == "missing",
         # kiwi's own units on the machine (the update, the runbook, the role): name, active, sub
         "kiwi_units": [{"name": u.split(":")[0][:-len(".service")], "active": u.split(":")[1], "sub": u.split(":")[2]}
                        for u in raw.get("kiwi_units", "").split() if u.count(":") == 2 and u.split(":")[0].endswith(".service")],
@@ -393,6 +398,9 @@ HINTS = {
     "service": "Restart it under the machine's services, and read its log there.",
     "unhealthy": "Read its log under the machine's services; a restart often helps.",
     "tunnel": "Apply the machine. If it stays, read the VPN client's log.",
+    "secureboot-ca": "fwupd brings the certificate: on the machine, sudo fwupdmgr get-updates lists the Secure Boot "
+                     "Signature Database update; sudo fwupdmgr update installs it, then a restart. A firmware (BIOS) "
+                     "update does too. It adds the 2023 certificate and keeps the 2011 one.",
     "failed-units": "Their log and a restart are with the machine's services (the app, the control page, or kiwi-server service FLEET MACHINE NAME logs).",
     "crash-loop": "Its log says why it stops: kiwi-server service FLEET MACHINE NAME logs. A setting, a full disk or its data.",
     "disk-full": "Remove what is not needed there, or give the machine a bigger disk.",
@@ -476,6 +484,9 @@ def assess(f, quiet=(), now=None):
             problems.append(bad("the VPN client %s does not forward: the mesh behind it has no internet" % t["container"], "tunnel"))
     if f.get("failed_units"):
         problems.append(warn("failed units: %s" % ", ".join(f["failed_units"]), "failed-units"))
+    if f.get("secureboot_ca_missing"):
+        problems.append(warn("Secure Boot: the firmware lacks Microsoft's 2023 UEFI certificate, so the bootloader is "
+                             "not updated (it still starts)", "secureboot-ca"))
     loops = sorted(((n, s) for s, n in (f.get("restarts") or {}).items() if n >= CRASH_LOOP), reverse=True)
     if loops:
         # restarted again and again by systemd or docker: it does not stay up (a setting, a disk, its data)

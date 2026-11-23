@@ -247,10 +247,15 @@ kiwi-server history ~/kiwi/fleet.yaml papaya --days 30
 ```
 
 The machine's own journal: every apply (which kiwi-server, from which computer),
-the nightly updates, what its runbook did, its backups and its starts. Applies
-made in a terminal are in it too, which the control node's Log does not see. The
-app's History of a machine and the page's History tab show it as **On the
-machine**.
+the nightly updates, what its runbook did, its backups and its starts. A failed
+update or backup comes with its reason, the last error it wrote (a backup server
+that refused it, for example). Applies made in a terminal are in it too, which
+the control node does not see.
+
+The app's History of a machine and the page's History tab show one list: what
+the machine remembers and what was done through the control node (by whom), each
+thing once, by day, newest first. **Changes**, **Backups** and **Problems**
+narrow it down. The network's **Activity** is the same list for all machines.
 
 ### A shell on a machine
 

@@ -9,6 +9,7 @@ import ipaddress
 import getpass
 import hashlib
 import socket
+import datetime
 import json
 import os
 import re
@@ -311,6 +312,8 @@ def settings_errors(roles, ms, host):
             fill_ai(host)               # as the render fills it in, before the module's own checks
         except KiwiError as e:
             return [str(e)]
+    if "backup-server" in (host.modules or []):
+        host.module_settings["backup-server"]["clients"] = backup_clients_of(host)
     return stack_errors(ms, host, role)
 
 
@@ -803,6 +806,8 @@ class Renderer:
             self.fill_vip(host)     # the site's moving address: its pair, password, checks (basics-twice.md)
         if "ai" in host.modules:
             self.fill_ai(host)      # who reaches the local AI: its LAN, the VPN (docs/design/ai.md)
+        if "backup-server" in host.modules:
+            host.module_settings["backup-server"]["clients"] = backup_clients_of(host)
         if role.node_type != "master" and "reverse-proxy" in host.modules:
             # a VPN group that reaches this node for some services only: refused at its other names
             pages = self._admin.get(host.hostname) or []
@@ -1756,8 +1761,30 @@ def record_applied(fleet, *names, only_new=False):
             raise
 
 
+def _modules_of(host):
+    """The resolved module list, or the written one before the settings are resolved."""
+    return host.modules or list(host.role_settings_raw.get("modules") or [])
+
+
 def _backup_clients(host):
-    return sorted((host.role_settings_raw.get("backup-server") or {}).get("clients") or [])
+    if "backup-server" not in _modules_of(host) and "backup-server" not in host.role_settings_raw:
+        return []
+    return backup_clients_of(host)
+
+
+def backup_clients_of(host):
+    """Whose backups this server takes: its clients list, and every machine whose backup.servers
+    names it (rockpi backed up to lychee, which did not list it: 401 every night, 23 Nov 2026)."""
+    raw = host.role_settings_raw.get("backup-server") or {}
+    url = "https://" + str(raw.get("backup_domain") or "backup." + host.hostname)
+    out = set(str(c) for c in raw.get("clients") or [])
+    for x in host.fleet.hosts.values():
+        if x is host or "backup" not in _modules_of(x):
+            continue
+        servers = [str(s).rstrip("/") for s in ((x.role_settings_raw.get("backup") or {}).get("servers") or [])]
+        if url in servers:
+            out.add(x.hostname)
+    return sorted(out)
 
 
 def record_backup_clients(fleet, host):
@@ -5622,9 +5649,17 @@ def cmd_service(args):
 HISTORY_SCRIPT = r'''
 d=%(days)d
 journalctl --since "-${d}d" -o short-iso --no-pager -t kiwi-role -t kiwi-runbook 2>/dev/null | sed 's/^/J /'
-journalctl --since "-${d}d" -o short-iso --no-pager -u kiwi-stack-update.service -u kn-backup.service -u kiwi-backup.service \
-    2>/dev/null | grep -E 'systemd\[1\]: (Finished|Failed to start)' | sed 's/^/J /'
-journalctl --list-boots --no-pager 2>/dev/null | tail -n 20 | sed 's/^/B /'
+# per unit, with its error lines: a failure says why (a backup refused with 401, 23 Nov 2026)
+for u in kiwi-stack-update kn-backup kiwi-backup; do
+    journalctl --since "-${d}d" -o short-iso --no-pager -u "$u.service" 2>/dev/null \
+        | grep -E 'systemd\[1\]: (Finished|Failed to start)|Fatal|[Ee]rror|ERROR' | sed "s/^/U $u /"
+done
+# the starts as exact times (JSON, with no time zone to guess); an older journalctl: its table
+if b=$(journalctl --list-boots -o json --no-pager 2>/dev/null) && [ "${b#\[}" != "$b" ]; then
+    printf 'BJ %%s\n' "$b"
+else
+    journalctl --list-boots --no-pager 2>/dev/null | tail -n 20 | sed 's/^/B /'
+fi
 '''
 
 _UNIT_WORDS = {"kiwi-stack-update": "the nightly update", "kn-backup": "a backup", "kiwi-backup": "a backup"}
@@ -5633,9 +5668,30 @@ _UNIT_WORDS = {"kiwi-stack-update": "the nightly update", "kn-backup": "a backup
 def history_entries(out):
     """[{time, what, kind}] of HISTORY_SCRIPT's output, newest first: kind is apply, update,
     runbook, backup, boot or failed."""
-    found = []
+    found, why = [], {}
     for line in out.splitlines():
-        if line.startswith("J "):
+        if line.startswith("U "):           # a unit's own lines: its errors, then how it ended
+            m = re.match(r"U ([\w.-]+) (\S+) \S+ ([\w.-]+)(?:\[\d+\])?: (.*)$", line)
+            if not m:
+                continue
+            unit, when, tag, msg = m.groups()
+            if tag != "systemd":
+                msg = re.sub(r"^(Fatal: )+", "", msg.strip())
+                if msg and not msg.startswith("kn-backup.service:"):
+                    why[unit] = msg[:200]
+                continue
+            u = re.search(r"(Finished|Failed to start) ([\w.-]+)\.service", msg)
+            if not u:
+                continue
+            word = _UNIT_WORDS.get(unit, unit)
+            ok = u.group(1) == "Finished"
+            e = {"time": when, "what": "%s %s" % (word, "ran" if ok else "failed"),
+                 "kind": ("update" if "update" in unit else "backup") if ok else "failed"}
+            if not ok and why.get(unit):
+                e["detail"] = why[unit]
+            why.pop(unit, None)
+            found.append(e)
+        elif line.startswith("J "):
             m = re.match(r"J (\S+) \S+ ([\w.-]+)(?:\[\d+\])?: (.*)$", line)
             if not m:
                 continue
@@ -5651,11 +5707,22 @@ def history_entries(out):
             else:
                 kind = "apply" if tag == "kiwi-role" else "failed" if re.search(r": line \d+: ", msg) else "runbook"
                 found.append({"time": when, "what": msg.strip(), "kind": kind})
+        elif line.startswith("BJ "):
+            try:
+                boots = json.loads(line[3:])
+            except ValueError:
+                boots = []
+            for b in boots[-20:]:
+                us = b.get("first_entry") if isinstance(b, dict) else None
+                if isinstance(us, (int, float)) and us > 0:
+                    when = datetime.datetime.fromtimestamp(us / 1e6, datetime.timezone.utc).isoformat(timespec="seconds")
+                    found.append({"time": when, "what": "started", "kind": "boot"})
         elif line.startswith("B "):
             m = re.search(r"\w{3} (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)", line)
             if m:
                 found.append({"time": "%sT%s" % m.groups(), "what": "started", "kind": "boot"})
-    found.sort(key=lambda e: e["time"][:19], reverse=True)
+    from . import timeline         # times with and without their zone, compared as times
+    found.sort(key=lambda e: timeline._ts(e["time"]), reverse=True)
     return found[:200]
 
 

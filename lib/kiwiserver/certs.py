@@ -40,6 +40,7 @@ def _ensure_ca(ca_dir, days=DAYS, name_constraints=()):
         return key, pem
     if os.path.isfile(key) != os.path.isfile(pem):
         raise KiwiError("%s: only one of kiwiCA.key / kiwiCA.pem exists — restore the other or remove both" % ca_dir)
+    util.guard_store_dir(ca_dir)        # a locked store: no new CA in a folder on disk (23 Nov 2026)
     os.makedirs(ca_dir, mode=0o700, exist_ok=True)
     util.say("creating the fleet CA in %s (keep kiwiCA.key private, import kiwiCA.pem on your devices)" % ca_dir)
     _openssl(["genrsa", "-out", key + ".tmp", "4096"])

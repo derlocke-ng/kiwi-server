@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.308.1 — no new CA on disk while the store is locked
+
+- With the secret store locked, a command made a **new CA, its private key included**, in a
+  plain `secrets/ca` folder beside `secrets.age`, and the store could not be opened any more
+  ("exists and is not the store's link"). Making the CA, the writer lock and a disk's key now
+  refuse to create the store's folder on disk, as writing a file has since 2.306.4: such a
+  command stops with "the secret store is locked". (23 Nov 2026, after an update and a start of
+  the app with the store locked; the stray CA was a new one, shredded; the real one was safe.)
+
 ## 2.308.0 — switched rings: auto-unlock by stopping a ring
 
 - **A machine's own ring** (`unlock.switch`, docs/design/unlock.md): its disk is unlocked by its

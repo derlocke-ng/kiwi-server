@@ -70,6 +70,7 @@ def _read(path):
 
 
 def _make(path, length):
+    util.guard_store_dir(os.path.dirname(path))
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     key = "".join(secrets.choice(ALPHABET) for _ in range(length))
     util.write_bytes(path, key.encode(), 0o600)

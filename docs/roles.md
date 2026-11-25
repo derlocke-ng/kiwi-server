@@ -455,13 +455,48 @@ desk:
 
 ```bash
 kiwi-server ai key ~/kiwi/fleet.yaml desk          # the key, into the secret store
-kiwi-server ai connect ~/kiwi/fleet.yaml desk      # opencode's provider block
+kiwi-server ai models ~/kiwi/fleet.yaml desk       # the models it has, and which one is loaded
+kiwi-server ai load ~/kiwi/fleet.yaml desk tiel:UD-Q4_K_S --context 262144
+kiwi-server ai connect ~/kiwi/fleet.yaml desk --apply     # OpenCode on this computer uses it
 kiwi-server ai bench ~/kiwi/fleet.yaml desk        # each model: first token, tokens/s, known answers
 ```
 
-`bench` keeps its results in `ai-bench/<machine>.jsonl` beside the fleet file, to compare models
-and machines over time. `on_demand: true` makes a machine that is off a normal state: no alarm, no
-backup overdue; Wake starts it.
+**Load a model.** After a start Studio has no model loaded, and it answers no chat until one
+is. `ai load` loads one. You name it by its id, by `id:QUANT` for one of its quants (a quant is
+a compressed copy of the model: a higher number answers better and needs more memory), or by a
+part of the id that only one model has. `--context` says how many tokens it keeps in mind; more
+needs more memory of the graphics card. Without a name, `ai load` loads the model you loaded
+last, with the same context. A model that is loaded already stays loaded, because a load takes
+about a minute and Studio forgets the chats it had in memory.
+
+**Set up OpenCode.** `ai connect --apply` loads the model in the same way and then sets up
+every OpenCode on the computer you run it on: the Flatpak and the `opencode` command. It adds
+the AI to OpenCode's `opencode.json` and keeps everything else in that file; the file as it
+was is kept beside it as `opencode.json.before-kiwi`. What it writes:
+
+- The model's context, as Studio reports it. OpenCode needs this number to sum up a long chat
+  before the model runs out of room.
+- Timeouts of one hour. A full context takes minutes to read before the first word comes.
+- `top_k` 20 with every request (`--top-k`). Without it Studio lets some models choose among
+  all their words, which is a third slower.
+- The network's CA, so that OpenCode trusts `https://ai.<hostname>`. The Flatpak gets it by
+  itself; for the `opencode` command, the output names the variable to set.
+
+OpenCode reads the API key from the file `~/.config/kiwi/<machine>-ai.key`. This is a copy
+outside the secret store, because OpenCode needs the key also while the store is locked.
+Whoever can read that file can use the AI from your home network or the VPN, and nothing else.
+`--local-only` hides OpenCode's own cloud models, so that no answer comes from outside your
+network. At the end the command asks the model for one answer and one tool call. A model that
+does not call tools cannot edit files in OpenCode. Close and reopen OpenCode afterwards; it
+reads its settings when it starts. Without `--apply`, `ai connect` only prints the settings.
+
+**Compare models.** `ai bench` loads each model in turn, at the context of the model that was
+loaded, and loads that one again at the end. Name models to compare only these. It keeps its
+results in `ai-bench/<machine>.jsonl` beside the fleet file, to compare models and machines
+over time.
+
+`on_demand: true` makes a machine that is off a normal state: no alarm, no backup overdue;
+Wake starts it.
 
 ### On a machine without a big graphics card
 
@@ -494,6 +529,9 @@ lychee:
 - The API key is made by kiwi-server from the fleet's seed. `kiwi-server logins` shows it,
   `ai connect` and `ai bench` use it, and `ai key` is not needed. The chat page asks for the
   same key.
+- The models and their context come from the fleet, so `ai load` has nothing to choose. It
+  loads a model ahead of its first request; without it, the request that names a model loads
+  it. `ai connect --apply` and `ai bench` work as with Studio.
 - llama.cpp's own tools, its agent mode, its MCP proxy and its tunnel are off.
 
 Measured on 27 November 2026 on a Ryzen 7 PRO 5750G with 64 GB of memory: on its graphics chip

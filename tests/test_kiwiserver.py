@@ -17085,20 +17085,15 @@ if __name__ == "__main__":
 
 
 class TestLocalAI(unittest.TestCase):
-    """kiwi-server ai (docs/design/ai.md): opencode's block, and the benchmark through a stand-in API."""
+    """kiwi-server ai (docs/design/ai.md): Studio's models, the one that is loaded, OpenCode's
+    settings, and the benchmark, all through a stand-in for Studio's API."""
+
+    TIEL = "peculiar-ragdoll/Tiel-Coder-35B-A3B-GGUF-MTP"
+    QWEN = "unsloth/Qwen3.8-27B-GGUF"
 
     def host_and_fleet(self, tmp):
         fleet = types.SimpleNamespace(dir=tmp, resolve_path=lambda p: os.path.join(tmp, p))
         return fleet, types.SimpleNamespace(name="desk", hostname="desk.home", modules=["ai"])
-
-    def test_opencode_gets_the_models_and_the_key_from_the_environment(self):
-        from kiwiserver import ai
-        fleet, h = self.host_and_fleet(tempfile.mkdtemp())
-        env, block = ai.opencode_block(fleet, h, ["qwen3-14b", "gemma-3-12b"])
-        self.assertEqual(env, "KIWI_AI_DESK_KEY")
-        p = block["provider"]["kiwi-desk"]
-        self.assertEqual(p["options"], {"baseURL": "https://ai.desk.home/v1", "apiKey": "{env:KIWI_AI_DESK_KEY}"})
-        self.assertEqual(sorted(p["models"]), ["gemma-3-12b", "qwen3-14b"])
 
     def test_the_key_is_the_stores_for_studio_and_the_fleets_for_llama_cpp(self):
         from kiwiserver import ai
@@ -17112,20 +17107,21 @@ class TestLocalAI(unittest.TestCase):
         h.module_settings = {"ai": {"engine": "llama", "api_key": "key-from-the-seed-0123456789"}}
         self.assertEqual((ai.lean(h), ai.api_key(fleet, h)), (True, "key-from-the-seed-0123456789"))
 
-    def test_the_benchmark_times_each_model_and_checks_the_known_answers(self):
-        from kiwiserver import ai
-        tmp = tempfile.mkdtemp()
-        fleet, h = self.host_and_fleet(tmp)
-        answers = {"17 multiplied": "391", "capital of Australia": "Canberra", "bloops": "Yes",
-                   "German": "Die Katze schläft auf dem Sofa.", "is_even": "def is_even(n):\n    return n % 2 == 0"}
+    GEMMA = "ggml-org/gemma-3-4b-it-GGUF:Q4_K_M"
+    QWEN8 = "unsloth/Qwen3-8B-GGUF:Q4_K_M"
 
-        class Stream:
-            def __init__(self, prompt):
-                text = next((a for k, a in answers.items() if k in prompt), "word " * 50)
-                self.lines = [("data: " + json.dumps({"choices": [{"delta": {"content": w}}]}) + "\n").encode()
-                              for w in re.findall(r"\S+\s*", text)]
-                self.lines += [("data: " + json.dumps({"choices": [], "usage": {"completion_tokens": len(self.lines)}}) + "\n").encode(),
-                               b"data: [DONE]\n"]
+    def llama(self, own_context=40960):
+        """llama.cpp's server alone as it answered on 27 Nov 2026 (several-models mode): a model is one
+        name with its quant in it; it is loaded, sleeping or unloaded; one is in memory at a time, and
+        the request that names a model loads it."""
+        case = self
+
+        class Answer:
+            def __init__(self, lines=(), body=None):
+                self.lines, self.body = list(lines), body
+
+            def read(self):
+                return json.dumps(self.body).encode()
 
             def __iter__(self):
                 return iter(self.lines)
@@ -17136,17 +17132,436 @@ class TestLocalAI(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-        def call(fleet, host, path, body=None, timeout=300, stream=False):
-            return Stream(body["messages"][0]["content"])
-        with mock.patch.object(ai, "_call", call):
-            rows = ai.bench(fleet, h, ["qwen3-14b"], say=lambda s: None)
+        class Llama:
+            def __init__(self):
+                self.state, self.calls = {case.GEMMA: "unloaded", case.QWEN8: "unloaded"}, []
+
+            def load(self, name):
+                case.assertIn(name, self.state)
+                self.state = {n: "loaded" if n == name else "unloaded" for n in self.state}
+
+            def __call__(self, fleet, host, path, body=None, timeout=300):
+                self.calls.append((path, body))
+                if path == "/v1/models":
+                    return Answer(body={"object": "list", "data": [{"id": n, "status": {"value": v}} for n, v in self.state.items()]})
+                if path == "/models/load":
+                    self.load(body["model"])
+                    return Answer(body={"success": True})
+                if path.startswith("/props?model="):
+                    return Answer(body={"default_generation_settings": {"n_ctx": own_context}})
+                case.assertEqual(path, "/v1/chat/completions")
+                self.load(body["model"])
+                lines = [{"choices": [{"delta": {"content": w}}]} for w in ["word "] * 20]
+                lines += [{"choices": [], "usage": {"completion_tokens": 20},
+                           "timings": {"prompt_n": len(body["messages"][0]["content"]) // 4, "prompt_per_second": 227.0}}]
+                return Answer([("data: %s\n" % json.dumps(d)).encode() for d in lines] + [b"data: [DONE]\n"])
+        return Llama()
+
+    def test_llama_cpp_alone_takes_models_and_context_from_the_fleet_and_loads_by_the_request(self):
+        """ai.engine: llama: nothing is chosen per load. The fleet names the models and their context;
+        `load` loads one ahead of the first request, and the benchmark asks each in turn."""
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        h.module_settings = {"ai": {"engine": "llama", "api_key": "key-from-the-seed-0123456789", "context": 8192,
+                                    "models": [self.GEMMA, self.QWEN8]}}
+        server, said = self.llama(), []
+        with mock.patch.object(ai, "_call", server), mock.patch.object(ai.time, "sleep", lambda s: None):
+            self.assertEqual([(e["id"], e["loaded"], e["state"], e["context"], e["quants"]) for e in ai.models(fleet, h)],
+                             [(self.GEMMA, False, "unloaded", 8192, []), (self.QWEN8, False, "unloaded", 8192, [])])
+            self.assertEqual(ai.status(fleet, h)["model"], "")
+            now = ai.ready(fleet, h, say=said.append)                   # nothing named, nothing in memory: the fleet's first
+            self.assertEqual(now, {"model": self.GEMMA, "quant": "", "context": 8192, "images": False, "loaded": True})
+            self.assertIn(("/models/load", {"model": self.GEMMA}), server.calls)
+            self.assertNotIn("/v1/load", [c[0] for c in server.calls])  # Studio's way is not asked of it
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ai")))   # nothing is kept as chosen: the fleet says it
+            server.calls.clear()
+            now = ai.ready(fleet, h, None, None, 32768, say=said.append)    # in memory: it stays; the context is the fleet's
+            self.assertEqual((now["loaded"], now["context"]), (False, 8192))
+            self.assertNotIn("/models/load", [c[0] for c in server.calls])
+            self.assertIn("the fleet's ai.context", said[-1])
+            server.state[self.GEMMA] = "sleeping"                       # asleep: there, back with the next request
+            self.assertEqual(ai.ready(fleet, h, say=said.append)["loaded"], False)
+            self.assertEqual((ai.status(fleet, h)["state"], ai.status(fleet, h)["model"]), ("sleeping", self.GEMMA))
+            self.assertNotIn("/models/load", [c[0] for c in server.calls])
+            self.assertEqual(ai.ready(fleet, h, "qwen", say=said.append)["model"], self.QWEN8)      # by a part of its name
+            server.load(self.GEMMA)
+            server.calls.clear()
+            rows = ai.bench(fleet, h, say=said.append)
+            self.assertEqual([(r["model"], r["context"], r["read_tokens_per_s"]) for r in rows],
+                             [(self.GEMMA, 8192, 227), (self.QWEN8, 8192, 227)])
+            self.assertEqual(server.state[self.GEMMA], "loaded")        # the one that was in memory is put back
+            self.assertEqual([c for c in server.calls if c[0] == "/models/load"][-1][1], {"model": self.GEMMA})
+            h.module_settings["ai"]["context"] = 0                      # as much as the model was trained for: it says how much
+            self.assertEqual(ai.ready(fleet, h, say=said.append)["context"], 40960)
+            block = ai.opencode_block(h, now["model"], now["quant"], 8192, "/home/me/.config/kiwi/desk-ai.key")
+            self.assertEqual(block["model"], "kiwi-desk/" + self.GEMMA)
+            self.assertEqual(block["provider"]["kiwi-desk"]["models"][self.GEMMA]["limit"], {"context": 8192, "output": 2048})
+
+    def studio(self, loaded=None, answers=None, give=None):
+        """Studio as it answered on 25 Nov 2026: a model with several quants is listed as its id and
+        once more as id:QUANT for each; one model at a time is loaded; chats need a loaded model."""
+        case, quants = self, {self.TIEL: ["UD-Q4_K_S", "UD-Q4_K_XL", "UD-Q2_K_XL"], self.QWEN: ["UD-IQ3_S"]}
+
+        class Answer:
+            def __init__(self, lines=(), body=None):
+                self.lines, self.body = list(lines), body
+
+            def read(self):
+                return json.dumps(self.body).encode()
+
+            def __iter__(self):
+                return iter(self.lines)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        class Studio:
+            def __init__(self):
+                self.loaded, self.calls = loaded, []        # loaded: {"model", "quant", "context", ...}
+
+            def models(self):
+                data = []
+                for repo, qs in quants.items():
+                    on = self.loaded if self.loaded and self.loaded["model"] == repo else None
+                    row = lambda mid, q: dict({"id": mid, "quant": q, "loaded": bool(on and on["quant"] == q)},
+                                              **({"context_length": on["context"]} if on and on["quant"] == q else {}))
+                    data.append(row(repo, on["quant"] if on else qs[0]))
+                    if len(qs) > 1:
+                        data += [row("%s:%s" % (repo, q), q) for q in qs]
+                return {"object": "list", "data": data}
+
+            def __call__(self, fleet, host, path, body=None, timeout=300):
+                self.calls.append((path, body))
+                on = self.loaded
+                if path == "/v1/models":
+                    return Answer(body=self.models())
+                if path == "/v1/status":
+                    return Answer(body={"active_model": on["model"], "gguf_variant": on["quant"], "context_length": on["context"],
+                                        "cache_type_kv": on.get("cache", "q8_0"), "disable_vision": not on.get("images"),
+                                        "requested_cache_ram": on.get("cache_ram")} if on else {})
+                if path == "/v1/load":
+                    got = min(body["max_seq_length"], give or body["max_seq_length"])
+                    self.loaded = {"model": body["model_path"], "quant": body.get("gguf_variant", ""), "context": got,
+                                   "cache": body.get("cache_type_kv", "f16"), "images": not body["disable_vision"],
+                                   "cache_ram": body.get("cache_ram")}
+                    return Answer(body={"status": "loaded", "context_length": got})
+                case.assertEqual(path, "/v1/chat/completions")
+                if on is None:
+                    raise KiwiError("desk: no model is loaded: kiwi-server ai load FLEET desk")
+                case.assertEqual(body["model"], on["model"])
+                if not body.get("stream"):
+                    return Answer(body={"choices": [{"message": {"tool_calls": [{"function": {"name": "read"}}]}}]})
+                prompt = body["messages"][0]["content"]
+                text = next((a for k, a in (answers or {}).items() if k in prompt), "word " * 50)
+                words = re.findall(r"\S+\s*", text)
+                lines = [{"choices": [{"delta": {"reasoning_content": "hm"}}]}]
+                lines += [{"choices": [{"delta": {"content": w}}]} for w in words]
+                lines += [{"choices": [], "usage": {"completion_tokens": len(words) + 1},
+                           "timings": {"prompt_n": len(prompt) // 4, "prompt_per_second": 1450.4, "predicted_per_second": 47.0}}]
+                return Answer([("data: %s\n" % json.dumps(d)).encode() for d in lines] + [b"data: [DONE]\n"])
+        return Studio()
+
+    def test_a_model_with_several_quants_is_one_model(self):
+        from kiwiserver import ai
+        got = ai.listing(self.studio({"model": self.TIEL, "quant": "UD-Q4_K_XL", "context": 262144}).models()["data"])
+        self.assertEqual([e["id"] for e in got], [self.TIEL, self.QWEN])
+        tiel, qwen = got
+        self.assertEqual(sorted(tiel["quants"]), ["UD-Q2_K_XL", "UD-Q4_K_S", "UD-Q4_K_XL"])
+        self.assertEqual((tiel["loaded"], tiel["quant"], tiel["context"]), (True, "UD-Q4_K_XL", 262144))
+        self.assertEqual((qwen["loaded"], qwen["quant"], qwen["quants"], qwen["context"]), (False, "UD-IQ3_S", ["UD-IQ3_S"], None))
+        nothing = ai.listing(self.studio().models()["data"])
+        self.assertEqual([(e["loaded"], e["quant"]) for e in nothing], [(False, "UD-Q4_K_S"), (False, "UD-IQ3_S")])
+        self.assertEqual(ai.listing([{"id": "org/plain", "loaded": False}, {"object": "model"}]),
+                         [{"id": "org/plain", "quants": [], "quant": "", "loaded": False, "context": None}])
+
+    def test_a_model_is_named_by_id_by_quant_or_by_a_part_only_it_has(self):
+        from kiwiserver import ai
+        idle = ai.listing(self.studio().models()["data"])
+        busy = ai.listing(self.studio({"model": self.QWEN, "quant": "UD-IQ3_S", "context": 65536}).models()["data"])
+        name = lambda got: (got[0]["id"], got[1])
+        self.assertEqual(name(ai.pick(idle, self.TIEL + ":UD-Q2_K_XL")), (self.TIEL, "UD-Q2_K_XL"))
+        self.assertEqual(name(ai.pick(idle, "tiel")), (self.TIEL, "UD-Q4_K_S"))
+        self.assertEqual(name(ai.pick(idle, "tiel:UD-Q4_K_XL")), (self.TIEL, "UD-Q4_K_XL"))
+        self.assertEqual(name(ai.pick(idle, "tiel", "UD-Q2_K_XL")), (self.TIEL, "UD-Q2_K_XL"))
+        self.assertEqual(name(ai.pick(busy)), (self.QWEN, "UD-IQ3_S"))                  # nothing named: the loaded one
+        last = {"model": self.TIEL, "quant": "UD-Q4_K_XL"}
+        self.assertEqual(name(ai.pick(busy, None, None, last)), (self.QWEN, "UD-IQ3_S"))    # never unloads unasked
+        self.assertEqual(name(ai.pick(idle, None, None, last)), (self.TIEL, "UD-Q4_K_XL"))  # after a start: as before
+        for args, said in (((idle,), "which model"), ((idle, "GGUF"), "no model GGUF"), ((idle, "llama"), "no model llama"),
+                           ((idle, "tiel", "Q8_0"), "no Q8_0 of"), (([],), "no model yet")):
+            with self.assertRaises(KiwiError) as e:
+                ai.pick(*args)
+            self.assertIn(said, str(e.exception))
+
+    def test_opencode_gets_the_context_the_patience_and_the_top_k(self):
+        from kiwiserver import ai
+        _fleet, h = self.host_and_fleet(tempfile.mkdtemp())
+        block = ai.opencode_block(h, self.TIEL, "UD-Q4_K_S", 262144)
+        p = block["provider"]["kiwi-desk"]
+        self.assertEqual(p["options"], {"baseURL": "https://ai.desk.home/v1", "apiKey": "{env:KIWI_AI_DESK_KEY}",
+                                        "timeout": False, "headerTimeout": 3600000, "chunkTimeout": 3600000})
+        # OpenCode 2.1 drops the whole provider on "chunkTimeout": false and answers from its cloud model
+        for k in ("headerTimeout", "chunkTimeout"):
+            self.assertIs(type(p["options"][k]), int)
+        self.assertEqual(p["models"], {self.TIEL: {"name": "Tiel-Coder-35B-A3B-GGUF-MTP UD-Q4_K_S on desk", "tool_call": True,
+                                                   "options": {"top_k": 20}, "limit": {"context": 262144, "output": 32768}}})
+        self.assertEqual(block["model"], "kiwi-desk/" + self.TIEL)
+        self.assertEqual(block["small_model"], block["model"])
+        self.assertNotIn("disabled_providers", block)
+        small = ai.opencode_block(h, "org/plain", "", 8192, "/home/me/.config/kiwi/desk-ai.key", top_k=40, local_only=True)
+        m = small["provider"]["kiwi-desk"]["models"]["org/plain"]
+        self.assertEqual((m["name"], m["limit"], m["options"]), ("plain on desk", {"context": 8192, "output": 2048}, {"top_k": 40}))
+        self.assertEqual(small["provider"]["kiwi-desk"]["options"]["apiKey"], "{file:/home/me/.config/kiwi/desk-ai.key}")
+        self.assertEqual(small["disabled_providers"], ["opencode"])
+
+    def test_opencodes_file_keeps_the_rest_and_a_copy_of_the_old_one(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        _fleet, h = self.host_and_fleet(tmp)
+        path = os.path.join(tmp, "config", "opencode", "opencode.json")
+        block = ai.opencode_block(h, self.TIEL, "UD-Q4_K_S", 262144, local_only=True)
+        self.assertEqual(ai.write_opencode(path, block), "")                    # no file before: no copy
+        mine = {"theme": "kiwi", "model": "opencode/big-pickle", "disabled_providers": ["x"],
+                "provider": {"other": {"name": "Other"}, "kiwi-desk": {"name": "old"}}}
+        util.write_text(path, json.dumps(mine))
+        self.assertEqual(ai.write_opencode(path, block), path + ".before-kiwi")
+        with open(path) as f:
+            now = json.load(f)
+        with open(path + ".before-kiwi") as f:
+            self.assertEqual(json.load(f), mine)
+        self.assertEqual((now["theme"], now["provider"]["other"]), ("kiwi", {"name": "Other"}))
+        self.assertEqual(now["provider"]["kiwi-desk"], block["provider"]["kiwi-desk"])
+        self.assertEqual((now["model"], now["small_model"]), (block["model"], block["model"]))
+        self.assertEqual(now["disabled_providers"], ["x", "opencode"])
+        self.assertEqual(ai.write_opencode(path, block), "same")                # nothing to do: the copy stays the old one
+        with open(path + ".before-kiwi") as f:
+            self.assertEqual(json.load(f), mine)
+        util.write_text(path, '{\n  // my notes\n  "theme": "kiwi"\n}\n')
+        with self.assertRaises(KiwiError) as e:
+            ai.write_opencode(path, block)
+        self.assertIn("not plain JSON", str(e.exception))
+        with open(path) as f:
+            self.assertIn("// my notes", f.read())
+
+    def test_a_loaded_model_stays_unless_something_else_is_asked_for(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        self.assertEqual(ai.load_body(self.TIEL, "UD-Q4_K_S", 262144),
+                         {"model_path": self.TIEL, "gguf_variant": "UD-Q4_K_S", "max_seq_length": 262144,
+                          "cache_type_kv": "q8_0", "disable_vision": True, "cache_ram": 16384})
+        self.assertEqual(ai.load_body("org/plain", "", 8192, "f16", True, None),
+                         {"model_path": "org/plain", "max_seq_length": 8192, "disable_vision": False})
+        said = []
+        s = self.studio({"model": self.TIEL, "quant": "UD-Q4_K_S", "context": 262144})
+        loads = lambda: [b for p, b in s.calls if p == "/v1/load"]
+        with mock.patch.object(ai, "_call", s):
+            now = ai.ready(fleet, h, say=said.append)
+            self.assertEqual(now, {"model": self.TIEL, "quant": "UD-Q4_K_S", "context": 262144, "images": False, "loaded": False})
+            self.assertEqual(loads(), [])
+            self.assertIn("is loaded, 262144 tokens", said[-1])
+            ai.ready(fleet, h, "tiel", "UD-Q4_K_S", 262144, say=said.append)    # asked for what is there
+            self.assertEqual(loads(), [])
+            now = ai.ready(fleet, h, context=131072, say=said.append)           # another context: loaded anew
+            self.assertEqual((now["context"], now["loaded"]), (131072, True))
+            self.assertEqual(loads()[-1]["max_seq_length"], 131072)
+            ai.ready(fleet, h, "qwen", say=said.append, keep=False)             # another model, not remembered
+            self.assertEqual(loads()[-1], ai.load_body(self.QWEN, "UD-IQ3_S", ai.CONTEXT))
+            self.assertEqual(ai.chosen(fleet, h), {"model": self.TIEL, "quant": "UD-Q4_K_S", "context": 131072, "images": False})
+            s.loaded = None                                                      # the machine started again
+            now = ai.ready(fleet, h, say=said.append)
+            self.assertEqual(loads()[-1], ai.load_body(self.TIEL, "UD-Q4_K_S", 131072))
+            self.assertEqual((now["model"], now["context"], now["loaded"]), (self.TIEL, 131072, True))
+        tight = self.studio(give=100000)
+        with mock.patch.object(ai, "_call", tight):
+            now = ai.ready(fleet, h, "tiel", "UD-Q2_K_XL", 262144, say=said.append)
+        self.assertEqual(now["context"], 100000)
+        self.assertIn("gave it 100000 tokens, not 262144", said[-1])
+
+    def test_the_benchmark_loads_each_model_and_puts_back_the_one_that_was_loaded(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        answers = {"17 multiplied": "391", "capital of Australia": "Canberra", "bloops": "Yes",
+                   "German": "Die Katze schläft auf dem Sofa.", "is_even": "def is_even(n):\n    return n % 2 == 0"}
+        s = self.studio(answers=answers)                                         # after a start: nothing is loaded
+        with mock.patch.object(ai, "_call", s):
+            rows = ai.bench(fleet, h, say=lambda t: None)
+        self.assertEqual([(r["model"], r["quant"], r["context"]) for r in rows],
+                         [(self.TIEL, "UD-Q4_K_S", ai.CONTEXT), (self.QWEN, "UD-IQ3_S", ai.CONTEXT)])
+        self.assertEqual([b["model_path"] for p, b in s.calls if p == "/v1/load"], [self.TIEL, self.QWEN])
         self.assertEqual(rows[0]["tasks"], "5/5")
         self.assertGreater(rows[0]["tokens_per_s"], 0)
+        self.assertEqual((rows[0]["read_tokens_per_s"], rows[0]["top_k"]), (1450, 20))  # llama-server's own count
+        self.assertGreater(rows[0]["read_tokens"], 4000)
+        chats = [b for p, b in s.calls if p == "/v1/chat/completions"]
+        self.assertEqual({b["top_k"] for b in chats}, {20})
         with open(os.path.join(tmp, "ai-bench", "desk.jsonl")) as f:
-            self.assertEqual(json.loads(f.readline())["model"], "qwen3-14b")
+            self.assertEqual(json.loads(f.readline())["model"], self.TIEL)
+
+        was = {"model": self.TIEL, "quant": "UD-Q4_K_XL", "context": 262144, "cache": "q8_0", "images": True, "cache_ram": 8192}
+        s = self.studio(dict(was), answers)
+        with mock.patch.object(ai, "_call", s):
+            rows = ai.bench(fleet, h, ["tiel", "qwen"], say=lambda t: None, top_k=40)
+        self.assertEqual([(r["quant"], r["context"], r["top_k"]) for r in rows], [("UD-Q4_K_XL", 262144, 40), ("UD-IQ3_S", 262144, 40)])
+        loads = [b for p, b in s.calls if p == "/v1/load"]
+        self.assertEqual([b["model_path"] for b in loads], [self.QWEN, self.TIEL])      # its own was not loaded again
+        self.assertEqual(loads[-1], ai.load_body(self.TIEL, "UD-Q4_K_XL", 262144, "q8_0", True, 8192))
+        self.assertEqual(s.loaded, was)
+        self.assertEqual(ai.chosen(fleet, h), {})                                # a benchmark chooses nothing
+
+        with mock.patch.object(ai, "_call", s):                                  # only the loaded one: no load at all
+            before = len(s.calls)
+            ai.bench(fleet, h, ["tiel"], say=lambda t: None)
+        self.assertEqual([p for p, _b in s.calls[before:] if p == "/v1/load"], [])
+
+    def test_studio_without_a_model_says_how_to_load_one(self):
+        import io
+        import urllib.error
+        from kiwiserver import ai
+        fleet, h = self.host_and_fleet(tempfile.mkdtemp())
         with self.assertRaises(KiwiError) as e:
             ai._call(fleet, h, "/v1/models")
         self.assertIn("no API key on record", str(e.exception))
+        util.write_text(os.path.join(fleet.dir, "secrets", "ai", "desk.key"), "sk-test-0123456789abcdef\n", 0o600)
+
+        def refuse(code, text):
+            def urlopen(req, timeout=None, context=None):
+                raise urllib.error.HTTPError(req.full_url, code, "no", {}, io.BytesIO(text.encode()))
+            return mock.patch.object(ai.urllib.request, "urlopen", urlopen)
+        with refuse(400, '{"error": {"message": "No model loaded. Load one first."}}'), self.assertRaises(KiwiError) as e:
+            ai.ask(fleet, h, self.TIEL, "hello")
+        self.assertEqual(str(e.exception), "desk: no model is loaded: kiwi-server ai load FLEET desk")
+        with refuse(422, '{"detail": [{"msg": "max_seq_length: not a number"}]}'), self.assertRaises(KiwiError) as e:
+            ai.load(fleet, h, self.TIEL, "", 1)
+        self.assertIn("said 422 to /v1/load", str(e.exception))
+        self.assertIn("not a number", str(e.exception))
+        with refuse(401, "Unauthorized"), self.assertRaises(KiwiError) as e:
+            ai.models(fleet, h)
+        self.assertIn("refused the key", str(e.exception))
+        self.assertNotIn("sk-test", str(e.exception))
+
+    def test_connect_sets_up_every_opencode_of_this_computer(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(os.path.join(tmp, "fleet"))
+        home = os.path.join(tmp, "home")
+        util.write_text(os.path.join(fleet.dir, "secrets", "ai", "desk.key"), "sk-test-0123456789abcdef\n", 0o600)
+        util.write_text(os.path.join(fleet.dir, "secrets", "ca", "kiwiCA.pem"), "-----BEGIN CERTIFICATE-----\nours\n-----END CERTIFICATE-----\n")
+        now = {"model": self.TIEL, "quant": "UD-Q4_K_S", "context": 262144, "images": False, "loaded": False}
+        said, ran = [], []
+
+        def run(cmd, **kw):
+            ran.append(cmd)
+            env = [c for r in ran[:-1] for c in r if c.startswith("--env=")]
+            return types.SimpleNamespace(stdout="[Environment]\n%s\n" % env[-1][6:] if env and "--show" in cmd else "")
+        self.assertEqual(ai.opencodes(home), [])
+        self.assertEqual(ai.connect(fleet, h, now, home=home, say=said.append, run=run), [])
+        self.assertIn("no OpenCode found", said[-1])
+        self.assertFalse(os.path.exists(os.path.join(home, ".config", "kiwi")))    # and no copy of the key for nobody
+
+        os.makedirs(os.path.join(home, ".var/app/ai.opencode.opencode"))
+        os.makedirs(os.path.join(home, ".config/opencode"))
+        flat = os.path.join(home, ".var/app/ai.opencode.opencode/config/opencode/opencode.json")
+        cli = os.path.join(home, ".config/opencode/opencode.json")
+        self.assertEqual([(k, p) for k, _label, p in ai.opencodes(home)], [("flatpak", flat), ("cli", cli)])
+        with mock.patch.object(ai.shutil, "which", lambda name: "/usr/bin/" + name):
+            wrote = ai.connect(fleet, h, now, local_only=True, home=home, say=said.append, run=run)
+            self.assertEqual(wrote, ["OpenCode (Flatpak)", "opencode in the terminal"])
+            key, ca = os.path.join(home, ".config/kiwi/desk-ai.key"), os.path.join(home, ".local/share/kiwi/kiwiCA.pem")
+            self.assertEqual(os.stat(key).st_mode & 0o777, 0o600)
+            with open(key) as f:
+                self.assertEqual(f.read(), "sk-test-0123456789abcdef\n")
+            with open(ca) as f:
+                self.assertIn("ours", f.read())
+            for path in (flat, cli):
+                with open(path) as f:
+                    conf = json.load(f)
+                p = conf["provider"]["kiwi-desk"]
+                self.assertEqual(p["options"]["apiKey"], "{file:%s}" % key)        # the file's path, never the key
+                self.assertEqual(p["models"][self.TIEL]["limit"]["context"], 262144)
+                self.assertEqual(conf["disabled_providers"], ["opencode"])
+                self.assertNotIn("sk-test", json.dumps(conf))
+            self.assertEqual(ran[-1], ["flatpak", "override", "--user", "--env=NODE_EXTRA_CA_CERTS=" + ca, "ai.opencode.opencode"])
+            self.assertTrue(any("now trusts the network's CA" in t for t in said))
+            self.assertFalse(any("sk-test" in t for t in said))
+            before, told = len(ran), len(said)
+            self.assertEqual(ai.connect(fleet, h, now, local_only=True, home=home, say=said.append, run=run), [])
+            self.assertEqual([c for c in ran[before:] if "--show" not in c], [])  # the CA is set: not set again
+            self.assertEqual([t for t in said[told:] if "set up" in t],
+                             ["OpenCode (Flatpak): already set up", "opencode in the terminal: already set up"])
+
+        # the CA file there is another network's: ours goes beside it, theirs stays
+        util.write_text(ca, "-----BEGIN CERTIFICATE-----\ntheirs\n-----END CERTIFICATE-----\n")
+        own = ai.ca_copy(fleet, h, home)
+        self.assertEqual(own, os.path.join(home, ".local/share/kiwi/kiwiCA-desk.pem"))
+        with open(ca) as f:
+            self.assertIn("theirs", f.read())
+        named = lambda cmd, **kw: types.SimpleNamespace(stdout="[Environment]\nNODE_EXTRA_CA_CERTS=/else/ca.pem\n")
+        with mock.patch.object(ai.shutil, "which", lambda name: "/usr/bin/" + name):
+            self.assertEqual(ai.flatpak_ca(own, named), "/else/ca.pem")           # another file is named: left alone
+
+
+class TestLocalAICommands(Base):
+    """kiwi-server ai models|load|connect on a fleet, Studio stood in for; this computer's home is a folder."""
+    run_cli = TestCli.run_cli
+    TIEL, QWEN, studio = TestLocalAI.TIEL, TestLocalAI.QWEN, TestLocalAI.studio
+
+    def test_load_and_connect_from_the_command_line(self):
+        from kiwiserver import ai
+        f = self.fleet({"defaults": self.base_defaults(network={"dhcp": False, "gateway": "192.168.2.1", "dns": ["9.9.9.9"]}), "hosts": {
+            "sorbet": {"role": "master", "master": self.master(), "network": {"dhcp": True}},
+            "desk": {"role": "node", "on_demand": True, "network": {"address": "192.168.2.40/24"},
+                     "node": {"vpn_ip": "10.8.0.9", "vpn-client": {"wireguard_config": "secrets/wg.conf"},
+                              "modules": ["vpn-client", "reverse-proxy", "ai"], "ai": {"gpu": "amd"}}}}})
+        write(os.path.join(self.tmp, "secrets", "ai", "desk.key"), "sk-test-0123456789abcdef\n")
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(os.path.join(home, ".var/app/ai.opencode.opencode"))
+        s = self.studio()
+        flatpak = lambda cmd, **kw: types.SimpleNamespace(stdout="")
+        with mock.patch.object(ai, "_call", s), mock.patch.dict(os.environ, {"HOME": home}), \
+                mock.patch.object(ai.subprocess, "run", flatpak):
+            rc, out, err = self.run_cli("ai", "models", f.path, "desk")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("    %s  UD-Q4_K_S, UD-Q4_K_XL, UD-Q2_K_XL" % self.TIEL, out)
+            self.assertIn("no model is loaded: kiwi-server ai load", out)
+            rc, out, err = self.run_cli("ai", "connect", f.path, "desk")         # nothing loaded: nothing to print
+            self.assertNotEqual(rc, 0)
+            self.assertIn("--apply loads one", err)
+            rc, out, err = self.run_cli("ai", "load", f.path, "desk")            # two models, none chosen yet
+            self.assertNotEqual(rc, 0)
+            self.assertIn("which model?", err)
+            rc, out, err = self.run_cli("ai", "load", f.path, "desk", "tiel:UD-Q4_K_XL", "--context", "200000")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual((s.loaded["model"], s.loaded["quant"], s.loaded["context"]), (self.TIEL, "UD-Q4_K_XL", 200000))
+            rc, out, err = self.run_cli("ai", "models", f.path, "desk", "--porcelain")
+            got = json.loads(out)
+            self.assertEqual((got["loaded"]["quant"], got["loaded"]["context"]), ("UD-Q4_K_XL", 200000))
+            rc, out, err = self.run_cli("ai", "connect", f.path, "desk")         # only shown: the key from the environment
+            self.assertEqual(rc, 0, err)
+            block = json.loads(out[:out.rindex("}") + 1])
+            p = block["provider"]["kiwi-desk"]
+            self.assertEqual((p["options"]["apiKey"], p["models"][self.TIEL]["limit"]["context"]), ("{env:KIWI_AI_DESK_KEY}", 200000))
+            self.assertFalse(os.path.exists(os.path.join(home, ".config")))
+            rc, out, err = self.run_cli("ai", "connect", f.path, "desk", "--apply", "--local-only", "--top-k", "40")
+            self.assertEqual(rc, 0, err)
+            self.assertIn("OpenCode (Flatpak): set up", out)
+            self.assertIn("tool call works", out)
+            self.assertIn("close and reopen OpenCode", out)
+            self.assertNotIn("sk-test", out + err)
+            with open(os.path.join(home, ".var/app/ai.opencode.opencode/config/opencode/opencode.json")) as fh:
+                conf = json.load(fh)
+            m = conf["provider"]["kiwi-desk"]["models"][self.TIEL]
+            self.assertEqual((m["limit"]["context"], m["options"]["top_k"], conf["disabled_providers"]), (200000, 40, ["opencode"]))
+            self.assertEqual([b["model_path"] for p_, b in s.calls if p_ == "/v1/load"], [self.TIEL])   # loaded once, kept after
+            self.assertEqual({b["top_k"] for p_, b in s.calls if p_ == "/v1/chat/completions"}, {40})
+            rc, out, err = self.run_cli("ai", "bench", f.path, "desk", "tiel", "--porcelain")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(json.loads(out.splitlines()[-1])["rows"][0]["context"], 200000)
 
 
 class TestLockedStoreWrites(unittest.TestCase):

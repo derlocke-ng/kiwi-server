@@ -5746,7 +5746,8 @@ def cmd_history(args):
 
 
 def cmd_ai(args):
-    """The local AI (docs/design/ai.md): its key into the store, opencode's provider block, a benchmark."""
+    """The local AI (docs/design/ai.md): its key into the store, the model it has loaded, OpenCode's
+    settings on this computer, a benchmark."""
     from . import ai as aimod
     fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
@@ -5765,14 +5766,55 @@ def cmd_ai(args):
         util.write_text(aimod.key_path(fleet, h), key + "\n", 0o600)
         util.say("%s: its API key is in the secret store (secrets/ai/%s.key)" % (h.name, h.name))
         return
-    if args.what == "connect":
-        env, block = aimod.opencode_block(fleet, h, aimod.models(fleet, h))
-        print(json.dumps(block, indent=2))
-        util.say("for opencode: this into ~/.config/opencode/opencode.json, the key into %s, and the network's CA into "
-                 "NODE_EXTRA_CA_CERTS (%s)" % (env, shown_path(fleet.resolve_path("secrets/ca/kiwiCA.pem"))))
+    porcelain = getattr(args, "porcelain", False)
+    top_k = args.top_k if args.top_k is not None else aimod.TOP_K
+    name = args.model or (args.models[0] if args.models and args.what in ("load", "connect") else None)
+    if args.what == "models":
+        entries = aimod.models(fleet, h)
+        st = aimod.status(fleet, h) if any(e["loaded"] for e in entries) else None
+        if porcelain:
+            print(json.dumps({"host": h.name, "models": entries, "loaded": st}))
+            return
+        for e in entries:
+            print("  %s %s  %s" % ("*" if e["loaded"] else " ", e["id"], ", ".join(e["quants"])))
+        if st and st.get("state") == "sleeping":
+            util.say("%s: %s is asleep: out of the memory, back with the next request" % (h.name, aimod.short(st["model"])))
+        elif st:
+            util.say("%s: %s%s is loaded, %s tokens of context" % (h.name, aimod.short(st["model"]),
+                                                                  " " + st["quant"] if st["quant"] else "", st["context"]))
+        elif aimod.lean(h):
+            util.say("%s: no model is in memory: the request that names one loads it" % h.name)
+        else:
+            util.say("%s: no model is loaded: kiwi-server ai load %s %s [MODEL]" % (h.name, args.fleet, h.name))
         return
-    rows = aimod.bench(fleet, h, args.models or None)
-    if getattr(args, "porcelain", False):
+    if args.what == "load":
+        now = aimod.ready(fleet, h, name, args.quant, args.context, args.images)
+        if porcelain:
+            print(json.dumps(dict(now, host=h.name)))
+        return
+    if args.what == "connect" and args.apply:
+        now = aimod.ready(fleet, h, name, args.quant, args.context, args.images)
+        wrote = aimod.connect(fleet, h, now, top_k, args.local_only)
+        if not args.no_test:
+            speed, tool = aimod.check(fleet, h, now["model"], top_k)
+            util.say("test: %.0f tokens per second, tool call %s"
+                     % (speed, "works" if tool else "did NOT come: OpenCode cannot edit files with this model"))
+        if wrote:
+            util.say("close and reopen OpenCode: it reads its settings when it starts")
+        return
+    if args.what == "connect":
+        e = next((x for x in aimod.models(fleet, h) if x["loaded"]), None)
+        if e is None:
+            raise KiwiError("%s: no model is loaded, so there is no context to write: "
+                            "kiwi-server ai connect %s %s --apply loads one and sets OpenCode up" % (h.name, args.fleet, h.name))
+        context = aimod.status(fleet, h)["context"] or e["context"]
+        print(json.dumps(aimod.opencode_block(h, e["id"], e["quant"], context, None, top_k, args.local_only), indent=2))
+        util.say("by hand: this into OpenCode's opencode.json, the key into %s, and the network's CA into "
+                 "NODE_EXTRA_CA_CERTS (%s). --apply does all of it"
+                 % (aimod.key_env(h), shown_path(fleet.resolve_path("secrets/ca/kiwiCA.pem"))))
+        return
+    rows = aimod.bench(fleet, h, args.models or None, context=args.context, top_k=top_k)
+    if porcelain:
         print(json.dumps({"host": h.name, "rows": rows}))
 
 
@@ -6848,8 +6890,9 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 one service of a machine's stack by hand, e.g. kn-nginx
   kiwi-server history <fleet> <host> [--days N]
                                                 what the machine itself remembers: applies, updates, its runbook, backups, starts
-  kiwi-server ai key|connect|bench <fleet> <host> [MODEL...]
-                                                the local AI: its API key, opencode's settings, a benchmark of its models
+  kiwi-server ai key|models|load|connect|bench <fleet> <host> [MODEL...]
+                                                the local AI: its API key, its models, loading one, a benchmark;
+                                                connect --apply sets up OpenCode on this computer
   kiwi-server ring <fleet> <ring> off|on|window   auto-unlock of the machines whose own ring it is: stopped,
                                                 running, or running for a while (docs/design/unlock.md)
   kiwi-server gone <fleet> [--dry-run]          machines that do not answer: what the fleet allows done about it
@@ -7205,8 +7248,20 @@ def build_parser():
     s.add_argument("--raw", action="store_true", help="logs: every line as the machine has it, podman's too")
     s.add_argument("--save", metavar="FILE", help="logs: the full log into this file as well")
     s.add_argument("--ssh", metavar="USER@ADDR")
-    s = sub("ai", cmd_ai); s.add_argument("what", choices=["key", "connect", "bench"]); s.add_argument("fleet"); s.add_argument("host")
-    s.add_argument("models", nargs="*", help="bench: these models only (default: every one it has)")
+    s = sub("ai", cmd_ai); s.add_argument("what", choices=["key", "models", "load", "connect", "bench"]); s.add_argument("fleet"); s.add_argument("host")
+    s.add_argument("models", nargs="*", help="bench: these models only (default: every one it has, one quant of each); load: the model. "
+                                             "A name is its id, id:QUANT, or a part of the id that only one model has")
+    s.add_argument("--apply", action="store_true", help="connect: load the model and set up every OpenCode on this computer "
+                                                        "(without it: only print the settings)")
+    s.add_argument("--model", help="load, connect --apply: this model (default: the loaded one, else the one chosen last)")
+    s.add_argument("--quant", help="load, connect --apply: this quant of it, e.g. UD-Q4_K_S")
+    s.add_argument("--context", type=int, metavar="TOKENS",
+                   help="load, connect --apply, bench: how much it keeps in mind (default: as loaded, else as chosen last, else 131072)")
+    s.add_argument("--images", action=argparse.BooleanOptionalAction, default=None,
+                   help="load, connect --apply: load the image reader too (takes memory of the card; off unless asked for)")
+    s.add_argument("--local-only", action="store_true", help="connect: hide OpenCode's own cloud models, so no answer comes from outside")
+    s.add_argument("--top-k", type=int, metavar="N", help="connect, bench: sent with every request (default 20; Studio's own 0 is a third slower)")
+    s.add_argument("--no-test", action="store_true", help="connect --apply: no test answer and tool call at the end")
     s = sub("history", cmd_history); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--days", type=int, default=30, help="how far back (default 30)")
     s.add_argument("--ssh", metavar="USER@ADDR")

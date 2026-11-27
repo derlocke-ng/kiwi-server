@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.310.0 — the local AI: load a model, set up OpenCode
+
+- **`kiwi-server ai models`** lists the models a machine's AI has and which one is loaded.
+  **`ai load FLEET MACHINE [MODEL] [--quant Q] [--context N]`** loads one: after a start Studio
+  has none loaded and answers no chat. A model that is loaded as asked stays; without a name it
+  is the one loaded last.
+- **`ai connect --apply`** loads the model and sets up every OpenCode on this computer: the
+  model's context, timeouts of an hour, `top_k`, the network's CA. The rest of `opencode.json`
+  is kept and the old file is copied beside it. OpenCode reads the key from
+  `~/.config/kiwi/<machine>-ai.key`, a copy outside the secret store, because it starts while
+  the store is locked. Without `--apply` the settings are only printed, as before.
+- **`ai bench`** loads each model it measures and puts back the one that was loaded, also when
+  a model fails to load. It records the reading speed too.
+- On a machine with llama.cpp alone (`engine: llama`) the same commands work: the fleet names
+  the models and their context, and `ai load` loads one ahead of its first request.
+- Tried on lemonaide (RX 9070 XT, 27 Nov 2026): Tiel-Coder 35B `UD-Q4_K_S` loaded at 262144
+  tokens in 41 s; it writes 47 tokens per second and reads 1429; `UD-Q2_K_XL` writes 117. The
+  commands on a llama.cpp machine are tested against a stand-in only.
+  (docs/roles.md, "A local AI")
+
 ## 2.309.0 — a lean local AI
 
 - **`ai.engine: llama`**: the `ai` module runs llama.cpp's server alone in place of Unsloth

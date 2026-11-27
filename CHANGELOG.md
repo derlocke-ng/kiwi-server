@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.319.0 — the accounts are asked before an apply, too
+
+- **accounts**: before an apply writes a machine's stack, Kanidm tests the config it would get
+  (its own `kanidmd configtest`, in a throwaway container on the machine, as nginx does since
+  2.317.0). A config it refuses stops the apply with Kanidm's own words, and nothing on the
+  machine has changed. A Kanidm that does not start means no sign-in at any service that uses
+  the accounts. (kiwi-modules 0.135.0, kiwi-stack 0.9.42: a `preflight` command written as
+  `exec PROGRAM ARGS` runs the program itself, for an image without a shell.)
+  `PART=accounts tests/drills/preflight.sh FLEET MACHINE` proves it.
+- **`kiwi-server check`**: the sites of a machine without the VPN (`vpn: false`) are asked on
+  that machine itself. From the master they could not be reached and counted as failed, which
+  said nothing about them.
+
 ## 2.318.0 — the parts say whether they work
 
 - **A node's tunnel to its master stays up while the master's way out is away.** The VPN

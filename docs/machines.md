@@ -244,7 +244,8 @@ nginx tests the config it would get, in a throwaway container on the machine. If
 it, the apply stops there with nginx's own words: "kn-nginx would not start with its new
 settings". The machine's files and containers are the ones from before, and its sites go on
 answering. Without this an nginx that refuses its config does not start again, and every site
-of the machine is gone until the next good apply.
+of the machine is gone until the next good apply. The accounts (Kanidm) are asked the same
+way.
 
 **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the step
 and the command, and `kiwi-server status` shows it. The marker that means

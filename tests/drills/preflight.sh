@@ -7,8 +7,10 @@
 #
 #   tests/drills/preflight.sh FLEET MACHINE
 #   e.g. tests/drills/preflight.sh ~/kiwi/fleet.yaml mulberry
+#   PART=accounts tests/drills/preflight.sh ~/kiwi/fleet.yaml quince      Kanidm's config instead
 #
-# MACHINE: one of drills.yaml's `allowed`, with the reverse-proxy module, already applied once.
+# MACHINE: one of drills.yaml's `allowed`, with the reverse-proxy module (PART=accounts: and the
+# accounts), already applied once.
 # KIWI_SERVER: the code under test, a checkout's bin/kiwi-server (default: the one this drill
 # lies in). One PASS or FAIL line per check. The machine is left on the code under test.
 set -u
@@ -25,21 +27,29 @@ sites() {       # the machine's own sites, asked on the machine: the ones that d
                 # .onion name is left out: it answers on a listener of its own, behind Tor)
     on 'sudo sh -c "sed -n \"s/^ *server_name  *\([a-z0-9.-]*\);.*/\1/p\" /home/*/docker/k?-nginx/nginx.conf /var/home/*/docker/k?-nginx/nginx.conf 2>/dev/null | sort -u | grep -v "\.onion\$" | while read n; do c=\$(curl -sk -o /dev/null -w %{http_code} --max-time 8 --resolve \$n:443:127.0.0.1 https://\$n/); case \$c in 2??|3??|4??) ;; *) echo \$n:\$c ;; esac; done"' 2>/dev/null | tr '\n' ' '
 }
-state() { on 'sudo sh -c "cat /home/*/docker/k?-nginx/nginx.conf /var/home/*/docker/k?-nginx/nginx.conf /etc/containers/systemd/k?-nginx.container 2>/dev/null | sha256sum; systemctl show -p ActiveEnterTimestampMonotonic --value k?-nginx.service"' 2>/dev/null | tr '\n' ' '; }
 
+# what is broken, what the part says to it, and the files and the container that must stay
+case ${PART:-proxy} in
+    proxy)    template=modules/reverse-proxy/nginx.conf.j2; line='bogus_directive on;'; words='unknown directive "bogus_directive"'
+              what=nginx; unit=nginx; files='k?-nginx/nginx.conf' ;;
+    accounts) template=modules/accounts/server.toml.j2; line='bogus_key = ['; words='unclosed array'
+              what=Kanidm; unit=accounts; files='k?-accounts/server.toml' ;;
+    *) echo "PART: proxy or accounts" >&2; exit 2 ;;
+esac
+state() { on "sudo sh -c $(printf '%q' "cat /home/*/docker/$files /var/home/*/docker/$files /etc/containers/systemd/k?-$unit.container 2>/dev/null | sha256sum; systemctl show -p ActiveEnterTimestampMonotonic --value k?-$unit.service")" 2>/dev/null | tr '\n' ' '; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/kiwi-preflight.XXXXXX"); trap 'rm -rf "$work"' EXIT
 cp -a "$(dirname "$(dirname "$ks")")" "$work/bad" 2>/dev/null; rm -rf "$work/bad/.git"
-echo 'bogus_directive on;' >> "$work/bad/modules/reverse-proxy/nginx.conf.j2"
-[ -x "$work/bad/bin/kiwi-server" ]; check $? "a copy of the code with a broken nginx template"
+echo "$line" >> "$work/bad/$template"
+[ -x "$work/bad/bin/kiwi-server" ]; check $? "a copy of the code with a broken $what template"
 before=$(state); bad=$(sites)
 [ -n "$before" ] && [ -z "$bad" ]; check $? "before: the machine's sites answer${bad:+ (not: $bad)}"
 
 say "== $m with the broken template"
 "$work/bad/bin/kiwi-server" apply "$fleet" "$m" > "$work/bad.log" 2>&1; rc=$?
 [ "$rc" != 0 ]; check $? "the apply stopped (exit $rc)"
-grep -q "would not start with its new settings" "$work/bad.log"; check $? "it says that the proxy would not start"
-grep -q 'unknown directive "bogus_directive"' "$work/bad.log"; check $? "with nginx's own words"
-grep -E "would not start|emerg" "$work/bad.log" | head -3 | cut -c1-200 | sed 's/^/        /'
+grep -q "would not start with its new settings" "$work/bad.log"; check $? "it says that $what would not start"
+grep -qF "$words" "$work/bad.log"; check $? "with $what's own words"
+grep -E "would not start|emerg|$words" "$work/bad.log" | head -3 | cut -c1-200 | sed 's/^/        /'
 after=$(state); bad=$(sites)
 [ "$before" = "$after" ]; check $? "its config, its quadlet and its running container are the ones from before"
 [ -z "$bad" ]; check $? "its sites still answer${bad:+ (not: $bad)}"

@@ -292,13 +292,43 @@ ks_unit() { # NAME   — unit file on stdin, then daemon-reload
 }
 ks_firewall_open() { # PORT/PROTO...
     if systemctl is-active -q firewalld 2>/dev/null; then
+        # Each port into the permanent and the running configuration, and no reload: a reload
+        # throws away what only the running one holds, and that was the stack network netavark
+        # made a trusted source when the stack started. The containers stayed up and could no
+        # longer ask their DNS: every proxied site answered 502 two minutes after an apply
+        # (lemonaide, 27 Nov 2026).
         local p
-        for p in "$@"; do firewall-cmd -q --permanent --add-port="$p"; done
-        firewall-cmd -q --reload
+        for p in "$@"; do
+            firewall-cmd -q --permanent --query-port="$p" || firewall-cmd -q --permanent --add-port="$p"
+            firewall-cmd -q --query-port="$p" || firewall-cmd -q --add-port="$p"
+        done
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
         local p
         for p in "$@"; do ufw allow "${p/-/:}" >/dev/null; done   # ufw spells a range a:b
     fi
+}
+
+ks_stack_subnets() { # the stack's networks, as their quadlets name them: one subnet per line
+    local q
+    for q in "${KS_QUADLET_DIR:-/etc/containers/systemd}"/*.network; do
+        [[ -f $q ]] && sed -n 's/^Subnet=//p' "$q"
+    done
+    return 0
+}
+ks_firewall_trust_stack() { # the stack network stays a trusted source, whoever reloads firewalld
+    [[ $KS_STACK_RUNTIME == podman ]] || return 0
+    systemctl is-active -q firewalld 2>/dev/null || return 0
+    # netavark adds it to the running configuration only, when a container starts: a reload
+    # (ours once, a package's, a person's) forgot it until the next start. Kept in the permanent
+    # one too; and put back into the running one, which repairs a machine a reload already hit.
+    local s
+    while read -r s; do
+        [[ -n $s ]] || continue
+        firewall-cmd -q --permanent --zone=trusted --query-source="$s" \
+            || { ks_say "firewalld: the stack network $s stays trusted across a reload"
+                 firewall-cmd -q --permanent --zone=trusted --add-source="$s"; }
+        firewall-cmd -q --zone=trusted --query-source="$s" || firewall-cmd -q --zone=trusted --add-source="$s"
+    done < <(ks_stack_subnets)
 }
 
 ks_firewall_trust_mesh() { # the mesh is as trusted as the stack network itself
@@ -1250,6 +1280,7 @@ ks_stack_apply() {
     ks_local_cache
     ks_stack_unpack
     ks_stack_install_cli
+    ks_firewall_trust_stack
     ks_firewall_trust_mesh
     ks_firewall_lan
     ks_vlans

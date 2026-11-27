@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.308.2 — an apply no longer cuts the containers' DNS
+
+- On a Podman machine with firewalld (uCore), every apply reloaded firewalld to open the
+  machine's ports. The reload dropped the containers' network from firewalld's trusted sources,
+  the containers could no longer resolve each other, and two minutes later the reverse proxy
+  answered **502 for every site** until the machine was restarted. Machines with the gateway
+  part were spared (it already kept that source); lemonaide was hit on 27 Nov 2026. Ports are
+  opened without a reload now, and the containers' network stays trusted across any reload; an
+  apply repairs a machine that was hit (kiwi-stack 0.9.34).
+- `tests/drills/firewall-reload.sh FLEET MACHINE URL` proves it on a machine: an apply, a reload
+  by hand, the site fetched 200 seconds after each.
+
 ## 2.308.1 — no new CA on disk while the store is locked
 
 - With the secret store locked, a command made a **new CA, its private key included**, in a

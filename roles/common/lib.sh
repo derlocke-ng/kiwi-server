@@ -107,6 +107,21 @@ ks_replace() { # TMP DEST   — TMP takes DEST's place, on the disk first: a pow
     sync -- "$(dirname -- "$2")" 2>/dev/null || true
 }
 
+KS_WROTE=0
+ks_put() { # TMP DEST MODE OWNER   — TMP becomes DEST; KS_WROTE: 1 when DEST was not there like this already
+    local tmp=$1 dest=$2 mode=$3 owner=$4 o=${4%%:*} g=${4##*:}
+    # as it is already (content, mode, owner): left alone. An apply that changes nothing writes
+    # nothing, and a file a container has mounted keeps its inode
+    if [[ -f $dest && ! -L $dest ]] && cmp -s -- "$tmp" "$dest" \
+            && [[ $(stat -c '%a %U:%G' -- "$dest" 2>/dev/null) == "$(printf '%o' "$((8#$mode))") $o:$g" ]]; then
+        rm -f -- "$tmp"; KS_WROTE=0; return 0
+    fi
+    chmod "$mode" "$tmp"
+    chown "$owner" "$tmp"
+    ks_replace "$tmp" "$dest"
+    KS_WROTE=1
+}
+
 ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
     local key=$1 dest=$2 mode=${3:-0600} owner=${4:-root:root} src
     ks_parent_dir "$dest"
@@ -118,18 +133,14 @@ ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
     else
         ks_die "no file for '$key' — neither embedded nor in ${KS_BUNDLE_DIR:-a bundle directory}"
     fi
-    chmod "$mode" "$dest.tmp"
-    chown "$owner" "$dest.tmp"
-    ks_replace "$dest.tmp" "$dest"
+    ks_put "$dest.tmp" "$dest" "$mode" "$owner"
 }
 
 ks_write() { # DEST [MODE] [OWNER]   — content on stdin
     local dest=$1 mode=${2:-0644} owner=${3:-root:root}
     ks_parent_dir "$dest"
     cat > "$dest.tmp"
-    chmod "$mode" "$dest.tmp"
-    chown "$owner" "$dest.tmp"
-    ks_replace "$dest.tmp" "$dest"
+    ks_put "$dest.tmp" "$dest" "$mode" "$owner"
 }
 
 ks_subst() { # SRC DEST VAR...   — ${VAR} and $VAR from the current shell, nothing else
@@ -286,9 +297,9 @@ ks_git_clone() { # URL REF DIR   — clone, or bring an existing clone to REF
 }
 
 # ---- services / firewall --------------------------------------------------------------
-ks_unit() { # NAME   — unit file on stdin, then daemon-reload
+ks_unit() { # NAME   — unit file on stdin; systemd reads its units again when this one changed
     ks_write "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" 0644
-    systemctl daemon-reload
+    if (( KS_WROTE )); then systemctl daemon-reload; fi
 }
 ks_firewall_open() { # PORT/PROTO...
     if systemctl is-active -q firewalld 2>/dev/null; then
@@ -297,10 +308,14 @@ ks_firewall_open() { # PORT/PROTO...
         # made a trusted source when the stack started. The containers stayed up and could no
         # longer ask their DNS: every proxied site answered 502 two minutes after an apply
         # (lemonaide, 27 Nov 2026).
-        local p
+        # Asked once what is open in each, then only what is missing is added: four questions a
+        # port took twelve seconds of every apply on a machine with fifteen ports.
+        local p kept now
+        kept=" $(firewall-cmd --permanent --list-ports 2>/dev/null | tr '\n' ' ') "
+        now=" $(firewall-cmd --list-ports 2>/dev/null | tr '\n' ' ') "
         for p in "$@"; do
-            firewall-cmd -q --permanent --query-port="$p" || firewall-cmd -q --permanent --add-port="$p"
-            firewall-cmd -q --query-port="$p" || firewall-cmd -q --add-port="$p"
+            [[ $kept == *" $p "* ]] || firewall-cmd -q --permanent --add-port="$p"
+            [[ $now == *" $p "* ]] || firewall-cmd -q --add-port="$p"
         done
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
         local p
@@ -725,6 +740,19 @@ ks_stack_drop_files() { # DIR
     done
 }
 
+# KS_TIMES=1 (kiwi-server apply with KIWI_APPLY_TIMES=1): after each step of the role, how long it
+# took, for steps of half a second and more. A step's name only, never a value: this is how to see
+# where an apply's time goes, since a trace is not allowed here.
+KS_T_LAST=
+ks_took() { # LABEL: the time since the last call
+    [[ ${KS_TIMES:-0} == 1 ]] || return 0
+    local now=${EPOCHREALTIME/,/.} d
+    d=$(awk -v a="${KS_T_LAST:-$now}" -v b="$now" 'BEGIN { printf "%.1f", b - a }')
+    KS_T_LAST=$now
+    case $d in 0.[0-4]) ;; *) echo "[times] $d s  $1" ;; esac
+    return 0
+}
+
 # The log of this script, for root only; and never a trace into it. What follows goes into the
 # log, and the script carries the stack's files (keys, passwords) in its variables: under
 # `bash -x` every one of them would be written there (27 Nov 2026: a timing trace on papaya put
@@ -746,6 +774,9 @@ KS_NAMES_FAILED=()
 # changes these lines in every container's quadlet and nothing else: no reason to restart them all
 # (27 Nov 2026: adding a vault to a machine restarted the eleven containers of its Nextcloud).
 ks_nameless() { grep -v '^AddHost=' -- "$1" | sha256sum; }
+ks_quadlet_path() { # NAME: where the stack's quadlet list entry lies (its target is a plain unit)
+    case $1 in *.target) echo "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" ;; *) echo "$KS_QUADLET_DIR/$1" ;; esac
+}
 ks_names_of() { sed -n 's/^AddHost=\(.*\):[^:]*$/\1/p' -- "$1" | tr '\n' ' '; }
 
 ks_stack_remember() {   # the files and quadlets as they are before the apply writes them
@@ -755,13 +786,18 @@ ks_stack_remember() {   # the files and quadlets as they are before the apply wr
         rel=${entry%:*}
         [[ -f $KS_STACK_DIR/$rel ]] && KS_BEFORE[$KS_STACK_DIR/$rel]=$(sha256sum < "$KS_STACK_DIR/$rel")
     done
+    for q in "${KS_STACK_UNITS[@]}"; do      # the stack's own units (a part's script that runs on the machine)
+        [[ -f ${KS_SYSTEMD_DIR:-/etc/systemd/system}/$q ]] && KS_BEFORE[${KS_SYSTEMD_DIR:-/etc/systemd/system}/$q]=$(sha256sum < "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$q")
+    done
     KS_BEFORE_NAMELESS=(); KS_BEFORE_NAMES=()
+    local p
     for q in "${KS_STACK_QUADLETS[@]}"; do
-        [[ -f $KS_QUADLET_DIR/$q ]] || continue
-        KS_BEFORE[$KS_QUADLET_DIR/$q]=$(sha256sum < "$KS_QUADLET_DIR/$q")
+        p=$(ks_quadlet_path "$q")
+        [[ -f $p ]] || continue
+        KS_BEFORE[$p]=$(sha256sum < "$p")
         if [[ $q == *.container ]]; then
-            KS_BEFORE_NAMELESS[$KS_QUADLET_DIR/$q]=$(ks_nameless "$KS_QUADLET_DIR/$q")
-            KS_BEFORE_NAMES[$KS_QUADLET_DIR/$q]=$(ks_names_of "$KS_QUADLET_DIR/$q")
+            KS_BEFORE_NAMELESS[$p]=$(ks_nameless "$p")
+            KS_BEFORE_NAMES[$p]=$(ks_names_of "$p")
         fi
     done
     return 0
@@ -774,9 +810,13 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
         p=$KS_STACK_DIR/${entry%:*}
         [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
     done
+    for q in "${KS_STACK_UNITS[@]}"; do
+        p=${KS_SYSTEMD_DIR:-/etc/systemd/system}/$q
+        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
+    done
     KS_NAMES_ONLY=()
     for q in "${KS_STACK_QUADLETS[@]}"; do
-        p=$KS_QUADLET_DIR/$q
+        p=$(ks_quadlet_path "$q")       # (until 0.9.37 the target was looked for among the quadlets: "changed" at every apply)
         [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] && continue
         if [[ -f $p && -n ${KS_BEFORE_NAMELESS[$p]:-} && ${KS_BEFORE_NAMELESS[$p]} == "$(ks_nameless "$p")" ]]; then
             KS_NAMES_ONLY+=("$p")       # the same container with other names: they reach it while it runs
@@ -784,6 +824,43 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
             KS_CHANGED+=("$p")
         fi
     done
+    return 0
+}
+
+ks_unit_fine() { # UNIT: it runs, its timer does (it rests between its runs), or its last run ended well
+    systemctl is-active -q "$1" 2>/dev/null && return 0
+    [[ $1 == *.service ]] || return 1
+    if [[ " ${KS_STACK_UNITS[*]} " == *" ${1%.service}.timer "* ]]; then
+        systemctl is-active -q "${1%.service}.timer" 2>/dev/null; return
+    fi
+    local r
+    r=$(systemctl show -p Result -p ExecMainStatus -p ExecMainExitTimestampMonotonic "$1" 2>/dev/null | tr '\n' ' ')
+    [[ $r == *"Result=success "* && $r == *"ExecMainStatus=0 "* && $r != *"ExecMainExitTimestampMonotonic=0 "* ]]
+}
+
+# The stack's units start again after an apply that changed something of the stack (a file, a
+# container, a name), after a start from nothing, and one by one when a unit is not fine. An apply
+# that changed nothing of the stack leaves them: restarting them all took 17 of 70 seconds on a
+# machine with a gateway and three sign-in set-ups, and a gateway's restart is a moment without
+# its routes (27 Nov 2026).
+ks_stack_units_start() { # 1: the stack was started from nothing or restarted something now
+    local unit touched=${1:-0} left=0
+    if [[ -e $(ks_pending_units) ]]; then touched=1; fi
+    for unit in "${KS_STACK_UNITS[@]}"; do
+        systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
+        if (( ! touched )) && ks_unit_fine "$unit"; then
+            left=$((left + 1)); continue
+        fi
+        if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
+            # a timer's service: run it now, but not on the apply's critical path (it may fetch from the Internet)
+            systemctl restart --no-block "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        else
+            systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
+        fi
+        ks_took "unit $unit"
+    done
+    rm -f "$(ks_pending_units)"
+    if (( left )); then ks_say "$left of the stack's units left as they run: nothing of the stack changed"; fi
     return 0
 }
 
@@ -804,7 +881,6 @@ ks_stack_names_live() {     # QUADLET: its running container takes the names the
     rc=$?; rm -f "$tmp"; return $rc
 }
 
-KS_PENDING_NAMES=${KS_PENDING_NAMES:-/etc/kiwi-server/names-pending}
 ks_stack_names_now() {      # the names reach the running containers; KS_NAMES_FAILED: the ones that need a restart after all
     local q n=0
     KS_NAMES_FAILED=()
@@ -812,7 +888,7 @@ ks_stack_names_now() {      # the names reach the running containers; KS_NAMES_F
         if ks_stack_names_live "$q"; then n=$((n + 1)); else KS_NAMES_FAILED+=("$(basename "$q" .container)"); fi
     done
     (( n )) && ks_say "$n container(s) took the machine's new names without a restart"
-    rm -f "$KS_PENDING_NAMES"
+    rm -f "$(ks_pending_names)"
     return 0
 }
 
@@ -820,14 +896,25 @@ ks_stack_names_now() {      # the names reach the running containers; KS_NAMES_F
 # ended before its restarts (an image that did not pull) are the same at the next run, which
 # then saw nothing to restart and left the old container serving the old settings.
 KS_PENDING=${KS_PENDING:-/etc/kiwi-server/restart-pending}
+# beside it: the names not handed over yet, and that the stack's units still have to run
+ks_pending_names() { echo "${KS_PENDING_NAMES:-${KS_PENDING%/*}/names-pending}"; }
+ks_pending_units() { echo "${KS_PENDING_UNITS:-${KS_PENDING%/*}/units-pending}"; }
 ks_stack_note_pending() {
     local svc q all=()
     install -d -m 0755 "$(dirname "$KS_PENDING")"
     # names an earlier run wrote into the quadlets and did not get to hand to the running
     # containers (it ended before): those containers restart now, the sure way
-    if [[ -f $KS_PENDING_NAMES ]]; then cat -- "$KS_PENDING_NAMES" >> "$KS_PENDING"; rm -f "$KS_PENDING_NAMES"; fi
+    if [[ -f $(ks_pending_names) ]]; then cat -- "$(ks_pending_names)" >> "$KS_PENDING"; rm -f "$(ks_pending_names)"; fi
     if (( ${#KS_NAMES_ONLY[@]} )); then
-        for q in "${KS_NAMES_ONLY[@]}"; do basename "$q" .container; done > "$KS_PENDING_NAMES"
+        for q in "${KS_NAMES_ONLY[@]}"; do basename "$q" .container; done > "$(ks_pending_names)"
+    fi
+    if [[ ${KS_TIMES:-0} == 1 ]] && (( ${#KS_CHANGED[@]} + ${#KS_NAMES_ONLY[@]} )); then    # with the times: what changed, by name
+        echo "[times] changed: ${KS_CHANGED[*]##*/}${KS_NAMES_ONLY[*]:+; names only: ${KS_NAMES_ONLY[*]##*/}}"
+    fi
+    # something of the stack changed: its units (a part's setup that runs on the machine) have to
+    # run again, at this apply or, when it ends before, at the next
+    if (( ${#KS_CHANGED[@]} + ${#KS_NAMES_ONLY[@]} )); then
+        install -d -m 0755 "$(dirname "$(ks_pending_units)")"; : > "$(ks_pending_units)"
     fi
     mapfile -t all < <(ks_stack_restart_due)
     if (( ${#all[@]} )); then
@@ -1331,7 +1418,8 @@ UNIT
 
 ks_stack_apply() {
     (( KS_STACK )) || ks_die "ks_stack_apply called for a role without modules"
-    local u=$KS_STACK_USER unit url
+    local u=$KS_STACK_USER unit url step restarted=0
+    ks_took "before the stack"
     ks_ensure_user "$u" 1000
     if [[ $KS_STACK_RUNTIME == podman ]]; then
         ks_ensure_podman
@@ -1340,24 +1428,18 @@ ks_stack_apply() {
         ks_add_to_group "$u" docker
         ks_add_to_group "$KS_ADMIN_USER" docker
     fi
-    ks_stack_host_prep
-    ks_stack_hosts
-    ks_local_cache
-    ks_stack_unpack
-    ks_stack_install_cli
-    ks_firewall_trust_stack
-    ks_firewall_trust_mesh
-    ks_firewall_lan
-    ks_vlans
-    ks_time_sync_at_boot
-    ks_time_servers
+    ks_took "the user and the container runtime"
+    for step in ks_stack_host_prep ks_stack_hosts ks_local_cache ks_stack_unpack ks_stack_install_cli \
+                ks_firewall_trust_stack ks_firewall_trust_mesh ks_firewall_lan ks_vlans ks_time_sync_at_boot ks_time_servers; do
+        "$step"; ks_took "$step"
+    done
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
-        ks_firewall_open "${KS_STACK_PORTS[@]}"
+        ks_firewall_open "${KS_STACK_PORTS[@]}"; ks_took ks_firewall_open
     fi
-    systemctl daemon-reload
-    ks_stack_pull
+    systemctl daemon-reload; ks_took "systemctl daemon-reload"
+    ks_stack_pull; ks_took ks_stack_pull
     ks_say "starting the stack (${KS_STACK_MODULES[*]})"
-    ks_stack_units
+    ks_stack_units; ks_took ks_stack_units
     systemctl enable -q kiwi-stack.service
     if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service && (( ! ${KS_STACK_FROM_THE_START:-0} )); then
         # a running stack: what is new starts, what changed restarts (a bind mount keeps the old
@@ -1366,6 +1448,7 @@ ks_stack_apply() {
         local changed=() svc
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
+        if (( ${#changed[@]} )); then restarted=1; fi
         ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         local failed=0
@@ -1380,22 +1463,15 @@ ks_stack_apply() {
     else
         # the first apply, a stopped stack or a recreated network: everything from the start
         systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
-        rm -f "$KS_PENDING" "$KS_PENDING_NAMES"
+        rm -f "$KS_PENDING" "$(ks_pending_names)"
+        restarted=1
     fi
+    ks_took "up, and the restarts of what changed"
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
-    ks_stack_ready
-    ks_stack_leased
-    ks_stack_prune
-    for unit in "${KS_STACK_UNITS[@]}"; do
-        systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
-        if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
-            # a timer's service: run it now, but not on the apply's critical path (it may fetch from the Internet)
-            systemctl restart --no-block "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
-        else
-            systemctl restart "$unit" || ks_warn "$unit did not start — journalctl -u $unit"
-        fi
-    done
+    ks_took "kiwi-stack verify"
+    for step in ks_stack_ready ks_stack_leased ks_stack_prune; do "$step"; ks_took "$step"; done
+    ks_stack_units_start "$restarted"
     # what was just written, forced to the disk: after a power cut in the next minute the
     # stack's files would otherwise come back empty, and nothing would start
     sync -f "$KS_STACK_DIR" 2>/dev/null || sync
@@ -1409,6 +1485,7 @@ ks_stack_apply() {
 # images) are the same as before and are left out: seconds instead of minutes.
 ks_stack_parts() {
     [[ -x /usr/local/bin/kiwi-stack && -f $KS_STACK_ENV ]] || { ks_say "no stack here yet: the whole role instead"; return 1; }
+    local restarted=0
     ks_say "only the stack changed: its names and files, and what changed restarts"
     ks_stack_hosts
     ks_stack_unpack
@@ -1417,6 +1494,7 @@ ks_stack_parts() {
         local changed=() svc failed=0
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
+        if (( ${#changed[@]} )); then restarted=1; fi
         ks_say "restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         for svc in "${changed[@]}"; do
@@ -1429,12 +1507,17 @@ ks_stack_parts() {
         (( failed )) || rm -f "$KS_PENDING"
     else
         systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
-        rm -f "$KS_PENDING" "$KS_PENDING_NAMES"
+        rm -f "$KS_PENDING" "$(ks_pending_names)"
+        restarted=1
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
     ks_stack_ready
     ks_stack_leased
+    # a part's own script on the machine (its sign-in set-up, its shared folders, a gateway's routes)
+    # runs again when something of the stack changed: until 0.9.37 this path left them, and a
+    # setting that such a script applies waited for the next full apply
+    ks_stack_units_start "$restarted"
     sync -f "$KS_STACK_DIR" 2>/dev/null || sync
     return 0
 }

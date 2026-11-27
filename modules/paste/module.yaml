@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: paste
   title: Pastebin
-  version: 1.0.0
+  version: 1.0.1
   description: "A pastebin: a page to put a text (or a file) on and pass its link along. PrivateBin encrypts in the browser, the server keeps what it cannot read. At paste.<hostname> for the mesh; public with a public name on a master, or as a hidden service with the onion module"
   category: productivity
   node_types: [master, node]

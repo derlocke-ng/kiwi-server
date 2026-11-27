@@ -12,6 +12,13 @@ services:
       - PUID=0
       - PGID=0
     restart: unless-stopped
+    # its server answers
+    healthcheck:
+      test: ["CMD", "fail2ban-client", "ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:

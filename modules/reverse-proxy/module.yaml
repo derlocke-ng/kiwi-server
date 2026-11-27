@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: reverse-proxy
   title: Web addresses (nginx)
-  version: 1.4.0
+  version: 1.4.1
   description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own. On a master it lives inside the WireGuard server's network namespace: the admin pages get names, reachable from the mesh only"
   category: core
   node_types: [master, node]

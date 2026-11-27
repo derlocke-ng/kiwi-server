@@ -177,11 +177,24 @@ document it and are not tried.
   and in its backup. What a game downloads (Enshrouded, Abiotic Factor and
   Valheim fetch several GB at the first start) is in `kn-games-files/<server>`
   and is not backed up.
+- **A modded Minecraft.** Put the server pack's archive into
+  `kn-games-files/<server>/modpacks` on the machine and name the mod loader and
+  the pack in `env:` (the settings of the image, itzg/minecraft-server):
+  `modded: { game: minecraft, memory: 8G, env: { TYPE: NEOFORGE, VERSION: "1.21.1",
+  NEOFORGE_VERSION: "21.1.214", GENERIC_PACK: /modpacks/pack.zip } }`. The pack is
+  unpacked into the world's folder at the first start. A server that ran this
+  image elsewhere is taken over by moving its `data` folder to
+  `kn-games/<server>/data` and its pack to `kn-games-files/<server>/modpacks`
+  before the first apply (rehearsed by `tests/drills/minecraft-takeover.sh`).
 - **Zandronum** needs a game file: put `freedoom2.wad` (free, from
   freedoom.github.io) or your own `doom2.wad` into `kn-games/<server>/data`;
   `args:` is the server's command line.
 - The big games need a machine for it: Enshrouded wants about 16 GB of memory,
   Abiotic Factor and Palworld about 8.
+- **Abiotic Factor always has a password.** Without `password:` its image
+  sets the word `password`; players type that. It also does not end when it
+  is asked to: a stop waits its 90 seconds and then ends it, and its world is
+  the one it last saved by itself (it saves every five minutes).
 - **A server that sleeps while nobody plays**: `sleep: 30` stops it after 30
   minutes (5 or more) in which no player sent it anything, and frees the memory.
   The first player who tries to join wakes it; they get in a minute or two later

@@ -24,6 +24,11 @@ EnvironmentFile=/home/user/docker/kiwi/env/km-pihole.env
 Volume=/home/user/docker/km-pihole/etc-pihole:/etc/pihole:z
 Volume=/home/user/docker/km-pihole/etc-dnsmasq.d:/etc/dnsmasq.d:z
 Volume=/home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z
+HealthCmd="dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=60s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

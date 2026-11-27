@@ -39,6 +39,15 @@ services:
       - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL={{ keepalive or (10 if vpn_provider == 'custom' else 25) }}s
       - DNS_UPSTREAM_RESOLVERS={{ dot_providers }}
       - BLOCK_MALICIOUS=off
+{% if vpn_provider == 'custom' and 'HEALTH_RESTART_VPN' not in extra_env %}
+      # one fixed server (a node's is its master): a tunnel set up anew reaches the same server
+      # with the same keys, so nothing is gained, and everything that uses the tunnel is cut each
+      # time. gluetun's own check asks names on the Internet through the tunnel: while the
+      # master's way out was away, every node set its tunnel up anew every six seconds (27 Nov
+      # 2026: 76 times in eleven minutes), and a few times every morning when that way out
+      # reconnects. The tunnel now stays as it is
+      - HEALTH_RESTART_VPN=off
+{% endif %}
 {% for k, v in extra_env.items() %}
       - {{ k }}={{ v }}
 {% endfor %}

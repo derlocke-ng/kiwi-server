@@ -144,6 +144,15 @@ keys `image`, `container_name`, `environment`, `volumes`, `networks` with
 render error, so a module stays runnable on both runtimes. Images must be
 fully qualified (`docker.io/...`): podman never guesses a registry.
 
+**A service says whether it works.** Give every service a `healthcheck` in its compose
+fragment: a command inside the container that ends with 0 while the service does its job (its
+page answers, its port takes connections, its own check tool passes). Podman does not take over
+a health check the image brings, so one that is not written here does not exist. The status
+(`kiwi-server status`, the page, the app) names a service that reports unhealthy, the runbook's
+`part-down` acts on it, and a careful apply stops at it. Try the command first with `podman
+exec` in the running container, on every machine that runs it: a check that is wrong reports a
+working service as broken.
+
 `${VAR}` in module.yaml strings is the v2 convention and resolves against the
 context (`${VPN_IP}` → `vpn_ip`, `${DOCKERDIR}` → `docker_dir`,
 `${DOCKER_SUBNET2}` → `docker_subnet_base`); the string is Jinja-rendered

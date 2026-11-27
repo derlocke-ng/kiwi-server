@@ -66,6 +66,13 @@ services:
       - "{{ ssh_port }}:2222"
 {% endif %}
     restart: unless-stopped
+    # Forgejo's own health page
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3000/api/healthz"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: dns
   title: Ad blocker (Pi-hole)
-  version: 1.2.0
+  version: 1.2.1
   description: "Pi-hole v6 — ad-blocking resolver for the mesh or the LAN, forwarding to the VPN client's DNS-over-TLS; serves the fleet's own names and, optionally, the Mullvad SOCKS5 proxies'"
   category: core
 

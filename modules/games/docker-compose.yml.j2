@@ -28,6 +28,16 @@ services:
     restart: unless-stopped
     # a world is written when the server stops: it gets the time
     stop_grace_period: 90s
+{% if g.health %}
+    # the image's own word that the server takes players (the catalog's `health`). A server asleep
+    # is stopped and not asked; a modded one may load for many minutes before it counts
+    healthcheck:
+      test: {{ (["CMD"] + (g.health if g.health is not string else g.health.split())) | tojson }}
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 900s
+{% endif %}
     logging:
       driver: json-file
       options:

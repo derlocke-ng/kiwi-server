@@ -33,6 +33,11 @@ Volume=/home/user/docker/km-vpn-server:/etc/wireguard:z
 PublishPort=51820:51820/udp
 PublishPort=127.0.0.1:51821:51821/tcp
 PublishPort=127.0.0.1:8080:8081/tcp
+HealthCmd="wg show | grep -q interface"
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=30s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

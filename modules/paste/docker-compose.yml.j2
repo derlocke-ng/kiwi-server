@@ -9,6 +9,13 @@ services:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
     restart: unless-stopped
+    # its page answers
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:

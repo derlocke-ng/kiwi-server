@@ -26,6 +26,11 @@ PublishPort=53:53/tcp
 PublishPort=53:53/udp
 PublishPort=123:123/udp
 PublishPort=127.0.0.1:8080:80/tcp
+HealthCmd="dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=60s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

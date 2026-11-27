@@ -20,6 +20,11 @@ AddHost=cloud.sh3.home:172.128.0.5
 AddHost=vault.sh3.home:172.128.0.5
 AddHost=portainer.sh3.home:172.128.0.5
 Volume=/home/user/docker/kn-vault:/data:z
+HealthCmd=["/healthcheck.sh"]
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=30s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

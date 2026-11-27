@@ -84,7 +84,15 @@ L: days. New ideas go to the end of their section.
        module says that an update is the likely cure. Open: fleet-wide commands going on
        without the one machine whose setting is not known; the control node updating itself
        before it takes a newer fleet (today it warns after the push). S-M
-    d. Each part says how to tell it is ready (a page, a port, a command): one check for apply,
+    d. Begun (2.318.0): a health check for 25 parts (on the owner's machines 88 of 107
+       containers had none; podman drops the image's own), read by the status, the runbook and
+       the careful apply; `verify` names an unhealthy one (kiwi-stack 0.9.41). Open: the other
+       parts (portainer and CoreDNS have no shell; BTCPay's own services, the relay,
+       Tor, the AI; the gluetun of a node: its check asks the Internet through the master's
+       exit, so a fault there would name every node; a check of the mesh itself needs a port
+       on the master's mesh address that always answers), `verify`
+       at the end of an apply waiting for healthy, and the update going back on unhealthy.
+       Each part says how to tell it is ready (a page, a port, a command): one check for apply,
        update (back on a failure: the runbook's update-failed), the runbook and the status page.
        The accounts' wait on a command that no longer existed went unseen for weeks; a check
        that everything uses would have shown it. M
@@ -121,10 +129,18 @@ L: days. New ideas go to the end of their section.
 - The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
   rebased on 0.125.0): to try on lemonaide when it is free, then release. S
 - Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
-  with a stand-in, with and without server-side encryption (27 Nov). Open: Vaultwarden with an
-  account and an item, a game save; then mulberry goes (`kiwi-server remove`, its VM on sh3). M
+  with a stand-in, with and without server-side encryption (27 Nov); Vaultwarden with an
+  account and an item (27 Nov); the games on lemonaide (tests/drills/minecraft-takeover.sh,
+  enshrouded-takeover.sh, abiotic-takeover.sh, satisfactory-takeover.sh, the night of 27 Nov).
+  Open: mulberry goes (`kiwi-server remove`, its VM on sh3): the owner's word. S
 - ~~cloud: after a change of its name Talk keeps the old name in three lists.~~ Done
   (kiwi-modules 0.126.1, in 2.313.0).
+- Games, found at the takeover rehearsals (27 Nov 2026): a public Minecraft server with `sleep` is
+  woken by the Internet's scanners again and again (medlar's `survival`: any knock on its port
+  counts; a wake only for a real join would need the first attempt to fail); Abiotic Factor's
+  image sets the password `password` when none is given (said in docs/roles.md; the catalog
+  cannot say "none"). ~~Satisfactory's game files lay inside its backed-up folder~~ (kiwi-modules
+  0.133.0). S each
 
 ## 3. Dropped on 22 November 2026
 

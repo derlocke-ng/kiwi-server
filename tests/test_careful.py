@@ -65,7 +65,11 @@ class TestCareful(unittest.TestCase):
             raise KiwiError("medlar: ssh: connect to host medlar.home port 22: Connection refused")
         bad = careful.answers(h, "core@medlar", ["git.medlar.home"], run=gone, wait=0, sleep=lambda s: None, clock=lambda: now[0])
         self.assertIn("Connection refused", bad[0])
-        self.assertEqual(careful.answers(h, "core@medlar", [], run=gone), [])       # no site: nothing to ask
+        # no site: its parts are still asked, and one that reports unhealthy is named
+        sick = careful.answers(h, "core@medlar", [], run=lambda t, s: b"bad kn-vault:unhealthy\n", wait=0, sleep=lambda s: None,
+                               clock=lambda: now[0])
+        self.assertEqual(sick, ["kn-vault:unhealthy"])
+        self.assertEqual(careful.answers(h, "core@medlar", [], run=lambda t, s: b"bad\n", wait=0), [])
 
     def test_only_the_machines_own_names_under_the_fleets_domain_are_asked(self):
         r = types.SimpleNamespace(scan=lambda: None, aliases={"cloud.home"},
@@ -84,6 +88,13 @@ class TestCareful(unittest.TestCase):
         r = subprocess.run(["sh", "-c", "NAMES='ok.m.home login.m.home moved.m.home down.m.home gone.m.home'\n" + careful.VERIFY_SCRIPT],
                            capture_output=True, text=True, env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
         self.assertEqual(r.stdout.strip(), "bad down.m.home:502 gone.m.home:000")
+        # a part that reports unhealthy counts too (one that is starting does not: podman's filter)
+        with open(os.path.join(d, "podman"), "w") as f:
+            f.write('#!/bin/sh\n[ "$*" = "ps --filter health=unhealthy --format {{.Names}}" ] && echo kn-vault\n')
+        os.chmod(os.path.join(d, "podman"), 0o755)
+        r = subprocess.run(["sh", "-c", "NAMES='ok.m.home'\n" + careful.VERIFY_SCRIPT],
+                           capture_output=True, text=True, env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+        self.assertEqual(r.stdout.strip(), "bad kn-vault:unhealthy")
 
 
 if __name__ == "__main__":

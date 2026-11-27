@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.318.0 — the parts say whether they work
+
+- **A node's tunnel to its master stays up while the master's way out is away.** The VPN
+  client's own check asks names on the Internet through the tunnel, and when that failed it
+  set the tunnel up anew: every six seconds for as long as the master's way out was away (27
+  Nov 2026: 76 times in eleven minutes on each of six machines), and a few times every
+  morning at seven when the way out reconnects. Each time everything on the mesh was cut for
+  that machine, and nothing was gained: it is the same server and the same keys. Now the
+  tunnel stays. Tried with the way to the Internet cut inside the tunnel: before, 23 restarts
+  in a minute and the mesh broke off; now none, 230 of 230 pings to the master answered
+  (kiwi-modules 0.134.0; `tests/drills/tunnel-steady.sh MACHINE` proves it). Every node's VPN
+  client restarts once with this apply.
+- **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
+  VPN server, the control page and the public pages, every Tang ring, git, paste, the
+  authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync
+  and BTCPay, Jabber, the hub, OpenCloud, the accounts (Kanidm), the sign-up pages, Firefox
+  Sync and Minecraft servers (kiwi-modules 0.128.0 to 0.133.0). Podman does not take over the
+  check an image brings: on the machines of one network 88 of 107 containers had none, and the
+  status, the page and the runbook saw "running" and no more. Now a service that runs but does
+  not do its job is named ("kn-vault reports unhealthy"). Nothing acts on it by itself. These
+  containers restart once with the apply that brings the checks.
+- **A careful apply** (`--careful`) also stops when a service of the machine it just applied
+  reports unhealthy.
+- The end of every apply, and `kiwi-stack verify` and `status` on a machine, name a service
+  that runs and fails its own check ("unhealthy (it runs, and its own check fails): kn-vault").
+  That alone fails no apply (kiwi-stack 0.9.41).
+- **games**: the catalog's Minecraft (Java) has a folder for a server pack
+  (`kn-games-files/<server>/modpacks`, in the container `/modpacks`), for a modded server and
+  for taking one over from an older setup. `tests/drills/minecraft-takeover.sh` rehearses that:
+  an old-style NeoForge server with a pack and a marked world, its two folders moved, the
+  server in the fleet file; the world, the loader and the pack are the ones from before.
+  Minecraft servers restart once with the apply that brings this.
+  `tests/drills/enshrouded-takeover.sh` does the same for an Enshrouded server: its world moved
+  to where the module keeps it, the game's 8 GB taken along; the new server finds the old
+  world and downloads nothing. `tests/drills/abiotic-takeover.sh` and
+  `tests/drills/satisfactory-takeover.sh` do it for those two games.
+- **games**: a catalog game may name `health`; Minecraft and Satisfactory servers have their
+  own check. Satisfactory's game now lies in `kn-games-files/<server>/gamefiles`, outside the
+  folder that is backed up (it was in every backup). A Satisfactory server that exists
+  downloads the game once more at its next start, or move
+  `kn-games/<server>/config/gamefiles` there before the apply.
+- The public pages' own `/healthz` answered with an error 500 since the pages got a container
+  of their own; nothing asked it until the health check did.
+- docs/modules.md says how to write a health check and who reads it.
+
 ## 2.317.0 — the reverse proxy is asked before an apply writes anything
 
 - Before an apply writes a machine's stack, nginx tests the config it would get, in a throwaway

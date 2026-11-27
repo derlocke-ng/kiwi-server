@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: games
   title: Game servers
-  version: 1.1.0
+  version: 1.2.0
   description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
   category: gaming
   node_types: [node]
@@ -79,6 +79,8 @@ settings:
       sleep: minutes without players after which the server stops, to free the machine's memory; the first player who tries to join wakes it, and joins a minute or two later (Minecraft: refresh the server list, then join). Not for a server's first start, while it downloads the game.
       env: more settings of the image, as NAME: value. args: the server's command line, where the game takes one. image: another image than the catalog's.
       Example: survival: {game: minecraft, memory: 4G}
+      A modded Minecraft: put the server pack's archive into <docker folder>/kn-games-files/<server>/modpacks and name it,
+      modded: {game: minecraft, memory: 8G, env: {TYPE: NEOFORGE, VERSION: "1.21.1", NEOFORGE_VERSION: "21.1.214", GENERIC_PACK: /modpacks/pack.zip}}
     default: {}
   - key: eula
     type: bool
@@ -100,6 +102,9 @@ settings:
         image: docker.io/itzg/minecraft-server:latest
         ports: [25565/tcp]
         data: { data: /data }
+        # a server pack's archive, for a modded server: env: {TYPE: NEOFORGE, VERSION: "1.21.1",
+        # GENERIC_PACK: /modpacks/<its file>} unpacks it into the world's folder at the first start
+        files: { modpacks: /modpacks }
         env: { EULA: "TRUE", UID: "1000", GID: "1000", MEMORY: "{memory}", MOTD: "{name}" }
       minecraft-bedrock:
         title: Minecraft (Bedrock)

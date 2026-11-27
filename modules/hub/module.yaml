@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: hub
   title: Hub page
-  version: 1.2.1
+  version: 1.2.2
   description: "A hub built on kiwi-framework (Armory, or your fork) as a container behind the reverse proxy at hub.<hostname>: its relays, policy and public area set here, so a private hub inside the VPN, a semi-public one with a public chat, or a public one come from the same image"
   category: productivity
   node_types: [master, node]

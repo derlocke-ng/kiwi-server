@@ -177,6 +177,15 @@ document it and are not tried.
   and in its backup. What a game downloads (Enshrouded, Abiotic Factor and
   Valheim fetch several GB at the first start) is in `kn-games-files/<server>`
   and is not backed up.
+- **A modded Minecraft.** Put the server pack's archive into
+  `kn-games-files/<server>/modpacks` on the machine and name the mod loader and
+  the pack in `env:` (the settings of the image, itzg/minecraft-server):
+  `modded: { game: minecraft, memory: 8G, env: { TYPE: NEOFORGE, VERSION: "1.21.1",
+  NEOFORGE_VERSION: "21.1.214", GENERIC_PACK: /modpacks/pack.zip } }`. The pack is
+  unpacked into the world's folder at the first start. A server that ran this
+  image elsewhere is taken over by moving its `data` folder to
+  `kn-games/<server>/data` and its pack to `kn-games-files/<server>/modpacks`
+  before the first apply (rehearsed by `tests/drills/minecraft-takeover.sh`).
 - **Zandronum** needs a game file: put `freedoom2.wad` (free, from
   freedoom.github.io) or your own `doom2.wad` into `kn-games/<server>/data`;
   `args:` is the server's command line.

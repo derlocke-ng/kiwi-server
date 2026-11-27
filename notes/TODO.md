@@ -84,11 +84,12 @@ L: days. New ideas go to the end of their section.
        module says that an update is the likely cure. Open: fleet-wide commands going on
        without the one machine whose setting is not known; the control node updating itself
        before it takes a newer fleet (today it warns after the push). S-M
-    d. Begun (2.318.0): a health check for nineteen parts (on the owner's machines 88 of 107
+    d. Begun (2.318.0): a health check for 22 parts (on the owner's machines 88 of 107
        containers had none; podman drops the image's own), read by the status, the runbook and
-       the careful apply. Open: the other parts (portainer, CoreDNS and Kanidm have no shell;
-       Jabber: `ejabberdctl status` ends with 3 in the container; OpenCloud, BTCPay's own
-       services, the hub, the relay, Tor, the AI, the gluetun of a node), `verify`
+       the careful apply; `verify` names an unhealthy one (kiwi-stack 0.9.41). Open: the other
+       parts (portainer, CoreDNS and Kanidm have no shell; BTCPay's own services, the relay,
+       Tor, the AI; the gluetun of a node: its check passes on all eight, but it asks the
+       Internet through the master's exit, so a fault there would name every node), `verify`
        at the end of an apply waiting for healthy, and the update going back on unhealthy.
        Each part says how to tell it is ready (a page, a port, a command): one check for apply,
        update (back on a failure: the runbook's update-failed), the runbook and the status page.

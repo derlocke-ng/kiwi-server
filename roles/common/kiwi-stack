@@ -276,6 +276,16 @@ verify() {
         printf 'not running: %s\n' "${down[@]}" >&2
         return 1
     fi
+    # one that runs and says it is not well (its health check fails): named here, and no failure.
+    # An apply that changed something else must not fail for a part that hangs since yesterday;
+    # right after a restart a container is "starting", so this never names what the apply restarted
+    if [[ $STACK_RUNTIME == podman ]]; then
+        local c sick=()
+        while read -r c; do
+            [[ -n $c && " $STACK_SERVICES " == *" $c "* ]] && sick+=("$c")
+        done < <(podman ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null || true)
+        (( ${#sick[@]} == 0 )) || echo "unhealthy (it runs, and its own check fails): ${sick[*]} — kiwi-stack logs <name>" >&2
+    fi
     if (( ${#asleep[@]} )); then
         local list
         list=$(printf '%s, ' "${asleep[@]}")

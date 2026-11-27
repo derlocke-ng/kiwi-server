@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov); game saves not yet |
+| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft world on lemonaide; the Steam games' saves not yet |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -139,19 +139,48 @@ with the folder; v2 starts with sign-ups off.
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. v1 keeps one folder per server under `~/docker/games`; the `games` module keeps the
 save apart from the game's files, under `<docker folder>/kn-games/<server>/`. Where each goes
-(folder names read on sh3 on 27 Nov, the paths from the module's catalog; not rehearsed: the
-module needs the VPN, which the rehearsal machine does not have, and each game is gigabytes):
+(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft rehearsed
+that night, see below; the others not, each is gigabytes):
 
 | Game | v1's folder | goes into `kn-games/<server>/` |
 |---|---|---|
 | Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame` | `savegame` |
-| Minecraft, three worlds | `game-minecraft*/data` | `data` |
+| Minecraft, three worlds | `game-minecraft*/data`, `game-minecraft*/modpacks` | `data`; the pack into `kn-games-files/<server>/modpacks` |
 | Abiotic Factor | `game-abiotic/data` | `saves` (to check: that v1's `data` is the game's `Saved` folder) |
 | Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder |
 
-The game's own files download again by themselves. Open: v1's Minecraft servers also have a
-`modpacks` folder each, which the catalog's Minecraft has no place for yet. Checked by starting
-the server and seeing the world's name.
+The game's own files download again by themselves. Checked by starting the server and seeing
+the world's name.
+
+*Minecraft, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/minecraft-takeover.sh, 14 of
+14). v1's three folders are servers of the image the catalog uses too (itzg/minecraft-server)
+with a mod loader and a server pack, read from the files in `data` (names and versions only):
+
+| v1's folder | Minecraft | loader | pack in `modpacks` |
+|---|---|---|---|
+| `game-minecraft` (0.7 G) | 1.21.1 | NeoForge 21.1.133 | none left (the folder is empty) |
+| `game-minecraft2` (1.0 G + 0.6 G) | 1.21.1 | NeoForge 21.1.214 | `BMC5_Server_Pack_v44.5.zip` |
+| `game-minecraft-old` (1.1 G + 0.7 G) | 1.20.1 | Forge 47.3.11 | one archive |
+
+The steps, as rehearsed with a stand-in server made the same way (NeoForge 21.1.214, a small
+pack, a marked world): stop the old server; move `data` to `<docker folder>/kn-games/<server>/data`
+and `modpacks` to `<docker folder>/kn-games-files/<server>/modpacks` (the catalog's Minecraft has
+that folder since kiwi-modules 0.130.0); then the server in the fleet file with the loader it had,
+and apply:
+
+```yaml
+games:
+  eula: true
+  servers:
+    bmc5: {game: minecraft, memory: 8G, env: {TYPE: NEOFORGE, VERSION: "1.21.1", NEOFORGE_VERSION: "21.1.214", GENERIC_PACK: /modpacks/BMC5_Server_Pack_v44.5.zip}}
+```
+
+The new server came up with the old world (same seed, the mark set before), ran the same loader
+and did not unpack the pack again (the pack's mark `.generic_pack.sum` in `data` came along).
+For the Forge world: `TYPE: FORGE, VERSION: "1.20.1", FORGE_VERSION: "47.3.11"` (the image's
+names; not rehearsed). A server whose `modpacks` folder is empty takes no `GENERIC_PACK`: its
+mods are in `data/mods`. What v1 had set besides (memory, the players allowed, RCON) is not on
+sh3 any more; `data/server.properties`, `ops.json` and `whitelist.json` come along with the folder.
 
 **The rehearsal** (before anything of v1 is wiped): on a throwaway VM, a small Nextcloud AIO
 set up the way v1 was (master container, the same parts), with a user and a file; a Vaultwarden

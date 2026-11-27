@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: xmpp
   title: Jabber
-  version: 2.0.0
+  version: 2.0.1
   description: "A Jabber (XMPP) server for your people: chats, group rooms, files, message history across devices. One service with up to three doors: the VPN (jabber.<hostname>), the Internet (a public name) and Tor (a hidden service). Or two separate ones, an internal and a public, that do not talk to each other. People make their own account in the app or on a page, after a captcha. It runs on a node or on the master; a node's public name comes in through the master"
   category: productivity
   node_types: [master, node]

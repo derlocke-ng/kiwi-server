@@ -4,14 +4,24 @@
 
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
-  authenticator, Immich, Paperless, the caches, Transmission and the databases of Firefox Sync
-  and BTCPay (kiwi-modules 0.128.0 and 0.129.0). Podman does not take over the
+  authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync
+  and BTCPay, Jabber, the hub and OpenCloud (kiwi-modules 0.128.0 to 0.130.0). Podman does not
+  take over the
   check an image brings: on the machines of one network 88 of 107 containers had none, and the
   status, the page and the runbook saw "running" and no more. Now a service that runs but does
   not do its job is named ("kn-vault reports unhealthy"). Nothing acts on it by itself. These
   containers restart once with the apply that brings the checks.
 - **A careful apply** (`--careful`) also stops when a service of the machine it just applied
   reports unhealthy.
+- The end of every apply, and `kiwi-stack verify` and `status` on a machine, name a service
+  that runs and fails its own check ("unhealthy (it runs, and its own check fails): kn-vault").
+  That alone fails no apply (kiwi-stack 0.9.41).
+- **games**: the catalog's Minecraft (Java) has a folder for a server pack
+  (`kn-games-files/<server>/modpacks`, in the container `/modpacks`), for a modded server and
+  for taking one over from an older setup. `tests/drills/minecraft-takeover.sh` rehearses that:
+  an old-style NeoForge server with a pack and a marked world, its two folders moved, the
+  server in the fleet file; the world, the loader and the pack are the ones from before.
+  Minecraft servers restart once with the apply that brings this.
 - The public pages' own `/healthz` answered with an error 500 since the pages got a container
   of their own; nothing asked it until the health check did.
 - docs/modules.md says how to write a health check and who reads it.

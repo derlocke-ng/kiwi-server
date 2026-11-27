@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.314.0 — a quicker apply
+
+Measured on papaya (34 containers, a gateway, 15 open ports) with an apply that changes
+nothing: the role went from 70 to 38 seconds (kiwi-stack 0.9.37).
+
+- **A part's own script on the machine runs again only with a reason**: something of the stack
+  changed, a container restarted, or it is not running as it should. Before, every full apply
+  restarted them all: a gateway lost its routes for a moment and a backup started. An apply
+  where only the stack changed now runs them when something changed; it left them before, so a
+  setting such a script applies (shared folders, a sign-in set-up) waited for the next full
+  apply.
+- firewalld is asked once which ports are open (12 seconds less with 15 ports), a file that is
+  there already as it should be is not written again, and systemd reads its units again only
+  for a unit that changed.
+- **`KIWI_APPLY_TIMES=1`** also prints each step of the role on the machine with its time, and
+  the names of the files that changed. (docs/machines.md, "Running machines")
+- `tests/drills/upgrade-rehearsal.sh FLEET MACHINE OLD_TAG [CHECK...]`: a throwaway machine is
+  applied with an older release, then with the one under test, and its services are asked
+  after each.
+
 ## 2.313.0 — two minutes less per apply where the accounts are; the role's log is root's alone
 
 - **An apply of the machine with the accounts took two minutes too long** (kiwi-modules 0.126.2).

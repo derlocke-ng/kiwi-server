@@ -179,6 +179,12 @@ files, a restart of the containers whose files changed, and the check that every
 runs. The machine's own steps (packages, users, firewall, its units, new images) are left out,
 and the apply says "only its stack changed". `KIWI_FULL_APPLY=1` runs the whole role anyway.
 
+**What starts again.** After an apply a container restarts when its definition or a file it
+reads changed. A part's own script on the machine (a gateway's routes, the shared folders of a
+Nextcloud, a sign-in set-up) runs again when something of the stack changed or a container
+restarted, and when it is not running as it should. An apply that changes nothing leaves all of
+them as they run, so a gateway keeps its routes and no backup starts.
+
 **A new name restarts nothing.** A new site on a machine gives each of its containers one more
 name, so that they reach the site through the machine's reverse proxy. The containers take the
 name while they run. Only the reverse proxy restarts, because its configuration changed.
@@ -188,7 +194,10 @@ whose names changed is still created anew).
 **One login per machine.** An apply makes some twenty calls to a machine after its role; they share
 one SSH connection, kept two minutes (a login is most of a call's second). A check whether a
 machine answers, its boot system and a test of a new key log in on their own.
-`KIWI_SSH_REUSE=0` logs in for every call; `KIWI_APPLY_TIMES=1` prints each call with its time.
+`KIWI_SSH_REUSE=0` logs in for every call. `KIWI_APPLY_TIMES=1` prints each call with its time,
+and each step of the role on the machine that took half a second or more, with the names of the
+files that changed. This is how to see where an apply's time goes; a trace of the role script
+(`bash -x`) is switched off by the script itself, because it carries the machine's secrets.
 
 **A change can reach other machines.** A new site on a node is a new name the
 machines that answer for names (the master, a home gateway) must learn; a public

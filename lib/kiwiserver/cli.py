@@ -3691,7 +3691,8 @@ def cmd_apply(args):
             # 2026: "we don't need to update the whole machine")
             only = not update and stack_only(fleet, h.name, script)
             util.say("%s: applying%s (the output below is the machine's)" % (h.name, ": only its stack changed" if only else ""))
-            rc = remote.run_stream(tgt, "bash /var/lib/kiwi-server/role.sh --force" + (" --stack-only" if only else ""), prefix=prefix)
+            times = "KS_TIMES=1 " if os.environ.get("KIWI_APPLY_TIMES") == "1" else ""     # each step of the role with its time
+            rc = remote.run_stream(tgt, times + "bash /var/lib/kiwi-server/role.sh --force" + (" --stack-only" if only else ""), prefix=prefix)
             if rc != 0:
                 raise KiwiError("the role script exited with %d — journalctl -u kiwi-role on the machine" % rc)
             if update:      # an apply fetches newer images; this brings them into use (only what changed restarts)

@@ -15,6 +15,8 @@
 - Measured on a Ryzen 7 PRO 5750G: a 4B model writes 17 tokens per second on its graphics chip,
   an 8B one 9.5. Tried with the processor alone on a Debian node and with Vulkan on a
   Radeon RX 9070 XT (uCore, Podman, SELinux). Not tried: `gpu: nvidia`.
+- `tests/drills/ai-lean.sh FLEET MACHINE [ADDRESS]` checks a machine's lean AI: its page, the
+  key, the models, an answer, and that a model leaves the memory when idle and comes back.
 
 ## 2.308.2 — an apply no longer cuts the containers' DNS
 

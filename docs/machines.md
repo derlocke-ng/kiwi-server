@@ -181,9 +181,9 @@ and the apply says "only its stack changed". `KIWI_FULL_APPLY=1` runs the whole 
 
 **What starts again.** After an apply a container restarts when its definition or a file it
 reads changed. A part's own script on the machine (a gateway's routes, the shared folders of a
-Nextcloud, a sign-in set-up) runs again when something of the stack changed or a container
-restarted, and when it is not running as it should. An apply that changes nothing leaves all of
-them as they run, so a gateway keeps its routes and no backup starts.
+Nextcloud, a sign-in set-up) runs again when a file of its own changed, and when it is not
+running as it should. A setting of another part leaves it as it runs, so a gateway keeps its
+routes and no backup starts.
 
 **A new name restarts nothing.** A new site on a machine gives each of its containers one more
 name, so that they reach the site through the machine's reverse proxy. The containers take the

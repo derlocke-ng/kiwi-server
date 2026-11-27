@@ -838,17 +838,62 @@ ks_unit_fine() { # UNIT: it runs, its timer does (it rests between its runs), or
     [[ $r == *"Result=success "* && $r == *"ExecMainStatus=0 "* && $r != *"ExecMainExitTimestampMonotonic=0 "* ]]
 }
 
-# The stack's units start again after an apply that changed something of the stack (a file, a
-# container, a name), after a start from nothing, and one by one when a unit is not fine. An apply
-# that changed nothing of the stack leaves them: restarting them all took 17 of 70 seconds on a
-# machine with a gateway and three sign-in set-ups, and a gateway's restart is a moment without
-# its routes (27 Nov 2026).
-ks_stack_units_start() { # 1: the stack was started from nothing or restarted something now
-    local unit touched=${1:-0} left=0
-    if [[ -e $(ks_pending_units) ]]; then touched=1; fi
+# The host-side files of the stack that changed in this apply: the units' own files, and what lies
+# beside the parts' scripts (kiwi/, without the containers' env files and the CA).
+ks_host_changes() {
+    local f
+    for f in "${KS_CHANGED[@]}"; do
+        case $f in
+            "${KS_SYSTEMD_DIR:-/etc/systemd/system}"/*) echo "$f" ;;
+            "$KS_STACK_DIR"/kiwi/env/*|"$KS_STACK_DIR"/kiwi/ca/*) ;;
+            "$KS_STACK_DIR"/kiwi/*) echo "$f" ;;
+        esac
+    done
+    return 0
+}
+
+ks_unit_claims() { # UNIT FILE: is the changed FILE this unit's? Its own file; or a file under kiwi/ whose
+    # name begins like a script the unit runs or reads (cloud-accounts.sh: cloud-accounts.env too,
+    # and what lies in a folder of the script's name)
+    local unit=$1 f=$2 dir=${KS_SYSTEMD_DIR:-/etc/systemd/system} p stem
+    [[ $f == "$dir/$unit" ]] && return 0
+    [[ -f $dir/$unit ]] || return 1
+    while read -r p; do
+        stem=${p##*/}; stem=${stem%.*}
+        [[ -n $stem && ${f%/*} == "${p%/*}" && ${f##*/} == "$stem"* ]] && return 0
+        [[ -n $stem && $f == "${p%/*}/$stem/"* ]] && return 0      # and what lies in a folder of that name (backup/)
+    done < <(grep -o "$KS_STACK_DIR/kiwi/[^ ;\"']*" "$dir/$unit" 2>/dev/null | sort -u)
+    return 1
+}
+
+# The stack's units (a part's own script on the machine: a gateway's routes, shared folders, a
+# sign-in set-up) start again when the stack started from nothing, when a unit is not fine, and when
+# a file of theirs changed: the unit itself, a script it runs, a file beside it of the same name.
+# A changed file under kiwi/ that no unit claims starts them all, to be sure; so does an apply
+# that ended before its units ran. Everything else leaves them as they run: until 0.9.37 every
+# full apply restarted them all (17 of 70 seconds on a machine with a gateway and three sign-in
+# set-ups, the gateway's routes gone for a moment, a backup started), and 0.9.37 still did for
+# any change in the stack.
+ks_stack_units_start() { # 1: the stack was started from nothing
+    local unit all=${1:-0} left=0 f claimed changes=() due
+    mapfile -t changes < <(ks_host_changes)
+    if (( ${KS_UNITS_WERE_PENDING:-0} )); then all=1; fi
+    for f in "${changes[@]}"; do
+        claimed=0
+        for unit in "${KS_STACK_UNITS[@]}"; do
+            if ks_unit_claims "$unit" "$f"; then claimed=1; break; fi
+        done
+        if (( ! claimed )); then all=1; fi
+    done
     for unit in "${KS_STACK_UNITS[@]}"; do
         systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
-        if (( ! touched )) && ks_unit_fine "$unit"; then
+        due=$all
+        if (( ! due )); then
+            for f in "${changes[@]}"; do
+                if ks_unit_claims "$unit" "$f"; then due=1; break; fi
+            done
+        fi
+        if (( ! due )) && ks_unit_fine "$unit"; then
             left=$((left + 1)); continue
         fi
         if [[ $unit == *.service && " ${KS_STACK_UNITS[*]} " == *" ${unit%.service}.timer "* ]]; then
@@ -860,7 +905,7 @@ ks_stack_units_start() { # 1: the stack was started from nothing or restarted so
         ks_took "unit $unit"
     done
     rm -f "$(ks_pending_units)"
-    if (( left )); then ks_say "$left of the stack's units left as they run: nothing of the stack changed"; fi
+    if (( left )); then ks_say "$left of the stack's units left as they run: nothing of theirs changed"; fi
     return 0
 }
 
@@ -913,7 +958,9 @@ ks_stack_note_pending() {
     fi
     # something of the stack changed: its units (a part's setup that runs on the machine) have to
     # run again, at this apply or, when it ends before, at the next
-    if (( ${#KS_CHANGED[@]} + ${#KS_NAMES_ONLY[@]} )); then
+    KS_UNITS_WERE_PENDING=0
+    if [[ -e $(ks_pending_units) ]]; then KS_UNITS_WERE_PENDING=1; fi     # an earlier apply ended before its units ran
+    if [[ -n $(ks_host_changes) ]]; then
         install -d -m 0755 "$(dirname "$(ks_pending_units)")"; : > "$(ks_pending_units)"
     fi
     mapfile -t all < <(ks_stack_restart_due)
@@ -1448,7 +1495,6 @@ ks_stack_apply() {
         local changed=() svc
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
-        if (( ${#changed[@]} )); then restarted=1; fi
         ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         local failed=0
@@ -1494,7 +1540,6 @@ ks_stack_parts() {
         local changed=() svc failed=0
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
-        if (( ${#changed[@]} )); then restarted=1; fi
         ks_say "restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         for svc in "${changed[@]}"; do

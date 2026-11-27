@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.315.0 — a setting restarts only what is its own
+
+- **A part's script on the machine runs again when its own files changed** (kiwi-stack 0.9.38),
+  not for any change in the stack as in 2.314.0: a vault's setting restarts the vault's
+  container and nothing else; the accounts' password length runs the accounts' script and
+  leaves a gateway's routes alone. On quince a one-setting apply takes 18 seconds.
+- **Fewer calls after the role.** Each ring is asked once per run, in one call for its key and
+  its offer (it was twice per machine and ring). On CoreOS the boot system's SSH set-up leaves
+  at once when it was set up with the same script and keys before: five seconds less per apply.
+- A full apply that changes nothing, measured on quince: 177 seconds on 27 November before the
+  accounts' wait was found, 28 now.
+
 ## 2.314.0 — a quicker apply
 
 Measured on papaya (34 containers, a gateway, 15 open ports) with an apply that changes

@@ -7922,7 +7922,7 @@ class TestManage(Base):
     def luks_file(self, kind):
         return os.path.join(self.tmp, "secrets", "luks", "d." + kind)
 
-    def luks_apply(self, f, state="swapped /dev/vda5\n", reencrypt_fails=False, pending=True, flags=()):
+    def luks_apply(self, f, state="swapped /dev/vda5\n", reencrypt_fails=False, pending=True, flags=(), disks="uuid-of-the-old-disk"):
         if pending:
             write(self.luks_file("once"), self.ONCE)
         calls = []
@@ -7930,6 +7930,8 @@ class TestManage(Base):
         def fake_run(tgt, script, data=None, runner=None):
             if wakemod.LEARN in script or script in (unlock.BOUND_SCRIPT, unlock.UNBIND_SCRIPT) or "kiwi-asleep" in script:   # their own tests
                 return b""
+            if script == luks.DISKS_SCRIPT:
+                return (disks + "\n").encode()
             calls.append((script, data))
             if "luksChangeKey" in script:
                 return state.encode()
@@ -8008,11 +8010,37 @@ class TestManage(Base):
         self.assertTrue(os.path.exists(self.luks_file("once")))
 
     def test_a_key_made_for_a_later_install_is_left_alone(self):
-        rc, _out, err, calls = self.luks_apply(self.luks_host(), state="current /dev/vda5\n")
+        f = self.luks_host()
+        rc, _out, err, calls = self.luks_apply(f, state="current /dev/vda5\n")
         self.assertEqual(rc, 0, err)
         self.assertTrue(self.sent_role(calls))
         self.assertTrue(os.path.exists(self.luks_file("once")))
         self.assertFalse(os.path.exists(self.luks_file("next")))
+        # the disk is asked once: trying three keys on it takes seconds each, at every apply (7 s of
+        # a 20 s apply that changed nothing, lychee, 27 Nov 2026). Its answer is kept with its id
+        asked = lambda calls: any("luksChangeKey" in c[0] for c in calls)      # noqa: E731
+        self.assertTrue(asked(calls))
+        self.assertIn("uuid-of-the-old-disk", util.read_text(self.luks_file("seen")))
+        self.assertNotIn(self.ONCE, util.read_text(self.luks_file("seen")))
+        rc, _out, err, calls = self.luks_apply(f, state="current /dev/vda5\n")
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(asked(calls))
+        self.assertTrue(self.sent_role(calls))
+        # installed anew (another disk), or another one-time key: asked again, and the key is replaced
+        rc, _out, err, calls = self.luks_apply(f, state="swapped /dev/vda5\n", disks="uuid-of-the-new-disk")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(asked(calls))
+        self.assertFalse(os.path.exists(self.luks_file("once")))
+        self.assertFalse(os.path.exists(self.luks_file("seen")))
+        rc, _out, err, calls = self.luks_apply(f, state="current /dev/vda5\n")
+        self.assertTrue(asked(calls))
+        write(self.luks_file("once"), "another234abcde")
+        with mock.patch.object(self, "ONCE", "another234abcde"):
+            rc, _out, err, calls = self.luks_apply(f, state="current /dev/vda5\n")
+        self.assertTrue(asked(calls))
+        # a machine that does not say which disks it has is asked every time, as before
+        rc, _out, err, calls = self.luks_apply(f, state="current /dev/vda5\n", disks="")
+        self.assertTrue(asked(calls))
 
     def test_nothing_to_swap(self):
         swapped = lambda calls: any("luksChangeKey" in c[0] for c in calls)   # noqa: E731

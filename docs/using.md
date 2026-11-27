@@ -68,7 +68,7 @@ make the admin account, and in Vaultwarden everyone makes their own.
 | Is everything running? | the app's overview, the control page's Home, `kiwi-server status <fleet>` |
 | Changed a setting | "Apply" on the machine (app, page), `kiwi-server apply <fleet> <machine>` |
 | Newer versions of the services | "Update everything" on the control page, `kiwi-server apply <fleet> <machine> --update` |
-| Does every name answer after an update? | `kiwi-server check <fleet>`: every name of the network from the master, and every public name from your computer as a stranger reaches it, its certificate checked |
+| Does every name answer after an update? | `kiwi-server check <fleet>`: every name of the network from the master (the sites of a machine without the VPN on that machine itself), and every public name from your computer as a stranger reaches it, its certificate checked |
 | A copy of the network itself | "Fetch a copy" on the page's Backups, `kiwi-server backup <fleet>`; keep it away from your machines, with the recovery key |
 | Bring data back | "Snapshots" in the app, "Bring something back" on the page; [Backups](backups.md) |
 

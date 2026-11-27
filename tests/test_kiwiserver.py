@@ -4287,6 +4287,30 @@ class TestCheck(Base):
         self.assertRegex(out, r"FAILED gate +dns +quad9.net none")
         self.assertIn("NAMES=", seen[0])
 
+    def test_a_machine_outside_the_mesh_is_asked_on_itself(self):
+        """`vpn: false`: the master cannot reach that machine's sites ("000" from there said nothing
+        about them, 27 Nov 2026). Its sites are asked on the machine itself, and not from the master."""
+        f = self.fleet({"defaults": self.base_defaults(), "hosts": {
+            "gate": {"role": "master", "target": "debian", "master": self.master()},
+            "lone": {"role": "node", "network": {"dhcp": False, "address": "192.168.2.40/24", "gateway": "192.168.2.1"},
+                     "node": {"vpn": False, "modules": ["reverse-proxy", "vault"], "vault": {}}}}})
+        seen = {}
+
+        def fake_run(tgt, script, data=None, runner=None, **kw):
+            seen.setdefault(tgt, []).append(script)
+            return b"bad vault.lone.kiwi:502\n" if tgt == "core@lone" else b"https wg.gate.kiwi 403\n"
+        with mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@" + h.name):
+            rc, out, err = TestManage.run_cli(self, "check", f.path, "--no-public")
+        self.assertRegex(out, r"FAILED lone +https vault.lone.kiwi 502")
+        self.assertNotIn("vault.lone.kiwi", seen["core@gate"][0])               # not asked from the master
+        self.assertIn("vault.lone.kiwi", seen["core@lone"][0])
+        self.assertEqual(rc, 1)
+        with mock.patch.object(remote, "run", lambda tgt, script, **kw: b"bad\n" if tgt == "core@lone" else b"https wg.gate.kiwi 403\n"), \
+                mock.patch.object(remote, "reach", lambda h, o=None: "core@" + h.name):
+            rc, out, err = TestManage.run_cli(self, "check", f.path, "--no-public")
+        self.assertRegex(out, r"ok +lone +https vault.lone.kiwi answers")
+        self.assertEqual(rc, 0, err)
+
     def test_check_asks_the_public_names_from_here(self):
         names = types.SimpleNamespace(_names={"gate.kiwi": ["gate.kiwi", "wg.gate.kiwi", "relay.example.org"],
                                               "sh3.kiwi": ["cloud.sh3.kiwi", "status.example.org", "cloud.example.org"]},

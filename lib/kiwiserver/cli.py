@@ -3525,6 +3525,17 @@ def cmd_check(args):
     names = sorted({n for _ip, n in records if n.count(".") >= 2})        # services: <service>.<host>.<domain>
     hosts = sorted({n for _ip, n in records if n.count(".") == 1})
     failed, checked = [], 0
+    # a machine outside the mesh (`vpn: false`): the master cannot reach its sites, and "000" for
+    # them said nothing about the machine. They are asked on the machine itself, where its names
+    # lead to its own reverse proxy (as a careful apply asks them)
+    apart = []
+    if has_master(fleet, roles):
+        for h in fleet.hosts.values():
+            if (h.role_settings_raw or {}).get("vpn") is False and h.role in roles and roles[h.role].node_type != "master":
+                mine = [n for n in names if n.endswith("." + h.hostname)]
+                names = [n for n in names if n not in mine]
+                if mine and (not args.hosts or h.name in args.hosts):
+                    apart.append((h, mine))
     masters = [h for h in fleet.select(args.hosts) if h.role in roles and roles[h.role].node_type == "master"]
     if not masters and not has_master(fleet, roles):
         # a network without a master (docs/design/no-master.md): asked from the machines that answer for the names
@@ -3561,6 +3572,20 @@ def cmd_check(args):
             checked += 1
             if not ok:
                 failed.append("%s %s" % (kind, name))
+    from . import careful as carefulmod
+    for h, mine in apart:
+        try:
+            bad = dict(b.rsplit(":", 1) for b in carefulmod.answers(h, remote.reach(h, args.ssh), mine, run=remote.run, wait=0) if ":" in b)
+        except KiwiError as e:
+            print("%s: not reached: %s" % (h.name, e))
+            failed.append(h.name)
+            continue
+        for name in mine:
+            ok = name not in bad and h.name not in bad
+            print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", h.name, "https", name, "answers" if ok else bad.get(name, "000")))
+            checked += 1
+            if not ok:
+                failed.append("https %s" % name)
     # the public names, asked the way a stranger asks them: from here, through the Internet's DNS, and
     # with the Internet's certificates (a public name is never one of the network's own, 2.202.0)
     domain = next((h.domain for h in fleet.hosts.values() if h.domain), "home")

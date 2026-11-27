@@ -5809,9 +5809,10 @@ def cmd_ai(args):
                             "kiwi-server ai connect %s %s --apply loads one and sets OpenCode up" % (h.name, args.fleet, h.name))
         context = aimod.status(fleet, h)["context"] or e["context"]
         print(json.dumps(aimod.opencode_block(h, e["id"], e["quant"], context, None, top_k, args.local_only), indent=2))
-        util.say("by hand: this into OpenCode's opencode.json, the key into %s, and the network's CA into "
-                 "NODE_EXTRA_CA_CERTS (%s). --apply does all of it"
-                 % (aimod.key_env(h), shown_path(fleet.resolve_path("secrets/ca/kiwiCA.pem"))))
+        # not on stdout: that is the settings, and `> opencode.json` must give a file OpenCode reads
+        print(":: by hand: this into OpenCode's opencode.json, the key into %s, and the network's CA into "
+              "NODE_EXTRA_CA_CERTS (%s). --apply does all of it"
+              % (aimod.key_env(h), shown_path(fleet.resolve_path("secrets/ca/kiwiCA.pem"))), file=sys.stderr)
         return
     rows = aimod.bench(fleet, h, args.models or None, context=args.context, top_k=top_k)
     if porcelain:

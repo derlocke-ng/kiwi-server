@@ -35,11 +35,9 @@ L: days. New ideas go to the end of their section.
    design/basics-twice.md). Built (2.296.0): the vip module and the pair; lime and papaya share
    192.168.2.69 (.70 until 22 Nov, crumble-b's too), drilled; said again every 30 s (kiwi-modules 0.117.1); the Machines table names
    who holds it. DHCP from the holder only (kiwi-modules 0.120.0), drilled on a podman network of
-   its own (tests/drills/dhcp-pair.sh, 14 of 14). Open: DHCP on a real LAN (at the move); the gateway's switch drilled
-   with a device behind it: tests/drills/vip-gateway.sh is written (a cloud-image VM on sh3, its MAC
-   proven before anything logs in), but its static address never came up there, and its console
-   cannot be read without root on sh3. Next: why (a DHCP first boot, or a device from kiwi-server's
-   own netinst media). M
+   its own (tests/drills/dhcp-pair.sh, 14 of 14). The gateway's switch with a device behind it:
+   drilled (2.302.0, tests/drills/vip-gateway.sh: a device in a network namespace on medlar lost 3
+   of 58 fetches over two switches). Open: DHCP on a real LAN (at the move). S
 8. The app: the Machines and Devices tables by site with ticks and filters (ui.md). M-L
 9. ~~The Devices table by site on the page, as Machines (ui.md).~~ Done (2.295.0).
 10. The client side: devices enrolled and kept by the network (bundles, the app, phones). The owner,
@@ -87,6 +85,12 @@ L: days. New ideas go to the end of their section.
   syncs after the unlock, 2.301.0). M
 - What a move leaves behind: the old data and the old backup store stay until someone deletes them
   (how long to keep them is the owner's). S
+- The local AI (after 2.310.0): the chosen model as a setting of the `ai` module, loaded by the
+  machine itself after a start; choosing and loading a model in the app and on the control page. M
+- The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
+  rebased on 0.125.0): to try on lemonaide when it is free, then release. S
+- Taking over a v1 installation's data (notes/migration.md): the rehearsal on throwaway VMs with
+  stand-in data, Nextcloud AIO first. L
 
 ## 3. Dropped on 22 November 2026
 

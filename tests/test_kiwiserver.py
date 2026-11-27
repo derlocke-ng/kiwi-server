@@ -1623,6 +1623,18 @@ class TestArmbian(Base):
         self.assertTrue(all(once.encode() not in (i or b"") for c, i in calls if (c, i) not in sent))
         self.assertEqual(util.read_bytes(out), b"image")
         self.assertTrue(any(b"rm -f /secret/pass" in (i or b"") for _c, i in calls))
+        # The container has the builder's /dev: who owns each device node is noted before it works and
+        # put back after, also when the build fails (its packages gave sh3's /dev/kvm to a group of
+        # the container's, and no virtual machine started there for five days)
+        prepare = next(i for _c, i in calls if i and b"docker run -d --privileged" in i).decode()
+        self.assertLess(prepare.index("before=$(dev_keep)"), prepare.index('docker exec -i "$c" bash -s'))
+        self.assertIn("trap 'dev_back \"$before\"' EXIT", prepare)
+        build = armbian_build.BUILD % {"c": armbian_build.CONTAINER, "args": "BOARD=x"}
+        self.assertLess(build.index("before=$(dev_keep)"), build.index("./compile.sh build"))
+        self.assertLess(build.index("rc=$?\ndev_back"), build.rindex("exit $rc"))
+        for script in (prepare, build):
+            self.assertEqual(subprocess.run(["bash", "-n"], input=script.encode()).returncode, 0)
+            self.assertIn("tty*|console|ptmx) continue", script)        # terminals change hands with every login
         keys = [i for c, i in calls if "dropbear_authorized_keys" in " ".join(c)]
         self.assertIn(b"UNLOCKKEY", keys[0])                            # the unlock key, not the admin's
         self.assertIn(":n2:eth1:off", armbian_build.customize(self.host(

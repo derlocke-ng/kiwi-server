@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.316.1 — no false alarm in an apply, `ssh` to a master by its name
+
+- An apply since 2.315.0 could print "error: the role stopped … in ks_unit_claims" for every
+  host-side unit that names no script (eight lines on a master), while the role went on and
+  ended well. Nothing failed and no machine was left with a failure mark; the lines are gone
+  (kiwi-stack 0.9.39).
+- **`kiwi-server ssh-config`**: a master's own name now leads to its address on the Internet.
+  On the mesh its name is its VPN server's address, where no ssh answers, so `ssh sorbet` was
+  refused while `ssh sorbet-public` worked. Run `kiwi-server ssh-config FLEET --write` again.
+
 ## 2.316.0 — a careful apply
 
 - **`kiwi-server apply … --careful`**: one machine after the other, the least important first

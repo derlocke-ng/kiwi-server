@@ -45,7 +45,10 @@ L: days. New ideas go to the end of their section.
     machine) is to be managed by kiwi-server later too. M-L
 11. The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person). M
-12. An upgrade rehearsal drill: the previous release on a throwaway VM, data, the new one, `check`. M
+12. ~~An upgrade rehearsal drill~~ Done (2.314.0): tests/drills/upgrade-rehearsal.sh, an older
+    release applied to a throwaway machine, then the one under test, its services asked after each
+    and again 150 s later. Passed on mulberry from v2.306.0; an older release that cannot read
+    today's fleet files stops at its first step.
 14. Disk unlock as the owner asked (23 Nov 2026: "enable/disable it for certain clients, auto-unlock on
     a timer, 5 min for my gaming workstation, a separate ring for dev devices"; docs/design/unlock.md).
     Built (2.307.0): auto-unlock on/off per machine (`unlock.opens`), on the page and in the app.
@@ -62,20 +65,28 @@ L: days. New ideas go to the end of their section.
     settings (GPU, models). L~~ Done (2.306.0-2.306.3): lemonaide, an RX 9070 XT, runs Studio.
 
 15. Faster and stronger (the owner, 27 Nov 2026: "make this tool suck less, make it faster and
-    stronger"; measured that day, in this order):
-    a. Cheap applies. An apply that changes nothing takes 20 s on lychee, under 2 s of it on the
-       machine: a disk-key check at every apply while a one-time key for a later install waits
-       (luks.swap, 7 s), and the steps after the role sent one by one. A new site restarts every
-       container of the machine (each carries the machine's names as AddHost lines): names
-       without a restart. Goal: 3 s, and a new site restarts the proxy only. M
-    b. A rollout by the control node: a change or a release goes out by itself, the proxy's
-       config checked first (nginx-check), one machine first, then the rest, stop and back on a
-       failure. Replaces `apply --changed` by hand and the release chain script. M-L
-    c. The fleet says which release it needs: an older kiwi-server says "update me first", not
-       "unknown setting" (a new key refused the whole fleet for an hour that day), and the
-       control node updates itself before it takes the fleet. S-M
+    stronger"; measured that day and the night after):
+    a. ~~Cheap applies.~~ Done (2.312.0 to 2.315.0): a new name restarts nothing; the disk-key
+       check once; the accounts' wait (two minutes per apply where Kanidm runs); a part's script
+       on the machine runs again only when its own files changed; firewalld asked once;
+       unchanged files left; rings asked once per run; the boot system's SSH set-up leaves early.
+       A full apply that changes nothing: quince 177 s to 28 s, papaya 90 s to about 50 s; a
+       one-setting apply on quince 18 s. `KIWI_APPLY_TIMES=1` shows each call and each step.
+       Left: the disk-key tests on an encrypted machine (two calls, 4 s, slow by design) and
+       about fifteen small calls after the role (3 s).
+    b. A rollout by the control node. First step done (2.316.0): `apply --careful`, one machine
+       after the other, the least important first, its sites asked, the first failure stops it.
+       Open: the control node doing it by itself after a change or a release (the owner's word
+       is needed: it restarts things without a person), the proxy's config checked before
+       (tests/drills/nginx-check.py as a step of it), and putting a machine back. M
+    c. The fleet says which release it needs. Done in part (2.313.0): an unknown setting or
+       module says that an update is the likely cure. Open: fleet-wide commands going on
+       without the one machine whose setting is not known; the control node updating itself
+       before it takes a newer fleet (today it warns after the push). S-M
     d. Each part says how to tell it is ready (a page, a port, a command): one check for apply,
-       update (back on a failure: the runbook's update-failed), the runbook and the status page. M
+       update (back on a failure: the runbook's update-failed), the runbook and the status page.
+       The accounts' wait on a command that no longer existed went unseen for weeks; a check
+       that everything uses would have shown it. M
     e. Read commands in kubectl's way, from the agents' reports: get, describe, logs, explain. M
     Kubernetes (k0s) as the base: still no (scale.md); as a module for one site with three or
     more servers, or an export of the modules as Kubernetes YAML (Podman runs it): later.
@@ -111,8 +122,8 @@ L: days. New ideas go to the end of their section.
 - Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
   with a stand-in, with and without server-side encryption (27 Nov). Open: Vaultwarden with an
   account and an item, a game save; then mulberry goes (`kiwi-server remove`, its VM on sh3). M
-- cloud: after a change of its name Talk keeps the old name in three lists (signalling, STUN,
-  TURN), the old one first; the module should drop the entries that are not its name. S
+- ~~cloud: after a change of its name Talk keeps the old name in three lists.~~ Done
+  (kiwi-modules 0.126.1, in 2.313.0).
 
 ## 3. Dropped on 22 November 2026
 

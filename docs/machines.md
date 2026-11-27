@@ -301,7 +301,8 @@ port, the fleet's key and host keys. ssh reads the file once the first line of y
 `~/.ssh/config` is `Include config.d/*` (kiwi-server says so and does not change that
 file). Then `ssh papaya` works by the machine's name, and by an address when names do not
 resolve: `papaya-lan` (its fixed address at home), `papaya-vpn` (on the mesh),
-`sorbet-public` (a master's address on the Internet). Without `--write` the text is
+`sorbet-public` (a master's address on the Internet). A master's own name leads to that
+address too: on the mesh its name is its VPN server, where no ssh answers. Without `--write` the text is
 printed. It works while the fleet's secret store is open, and is made again after
 machines or addresses change.
 

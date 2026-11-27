@@ -1409,6 +1409,17 @@ class TestAdopt(Base):
         self.assertIn("systemctl restart kn-control.service", did)
         self.assertIn("the one before runs again", did)
 
+    def test_ssh_config_leads_a_masters_name_to_its_public_address(self):
+        """A master's name is its VPN server's address on the mesh, where no sshd answers (`ssh sorbet`
+        was refused, 27 Nov 2026): the name leads to its address on the Internet."""
+        f2 = self.fleet({"defaults": self.base_defaults(admin={"user": "core", "ssh_port": 41022}),
+                         "hosts": {"sorbet": {"role": "master", "target": "debian", "master": {"vpn-server": {"wg_host": "203.0.113.7"}}},
+                                   "lychee": {}}})
+        text2 = cli.ssh_config_text(f2)
+        self.assertIn("Host sorbet sorbet.kiwi\n    HostName 203.0.113.7\n", text2)
+        self.assertIn("Host sorbet-public\n    HostName 203.0.113.7\n", text2)
+        self.assertIn("Host lychee lychee.kiwi\n    HostName lychee.kiwi\n", text2)
+
     def test_ssh_config_names_every_machine_with_the_fleets_key(self):
         """`ssh-config`: ssh's own configuration for the machines, as kiwi-server reaches them. Printed
         without --write; nothing of the computer's own ~/.ssh is read or touched then."""

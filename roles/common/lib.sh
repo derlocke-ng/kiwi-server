@@ -862,7 +862,9 @@ ks_unit_claims() { # UNIT FILE: is the changed FILE this unit's? Its own file; o
         stem=${p##*/}; stem=${stem%.*}
         [[ -n $stem && ${f%/*} == "${p%/*}" && ${f##*/} == "$stem"* ]] && return 0
         [[ -n $stem && $f == "${p%/*}/$stem/"* ]] && return 0      # and what lies in a folder of that name (backup/)
-    done < <(grep -o "$KS_STACK_DIR/kiwi/[^ ;\"']*" "$dir/$unit" 2>/dev/null | sort -u)
+    # (a unit that names no such file is no error: under the role's error trap and pipefail a bare
+    # grep here stopped the subshell with "the role stopped … in ks_unit_claims", 0.9.38)
+    done < <({ grep -o "$KS_STACK_DIR/kiwi/[^ ;\"']*" "$dir/$unit" 2>/dev/null || true; } | sort -u)
     return 1
 }
 

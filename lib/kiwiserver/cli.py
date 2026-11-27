@@ -2119,7 +2119,8 @@ def ssh_config_text(fleet):
     the port, the fleet's own key and its own list of host keys (a machine met only by kiwi-server
     is known there, not in ~/.ssh/known_hosts). A `Host` per machine by its name, and one per
     address it has besides: NAME-lan (a fixed address at home), NAME-vpn (on the mesh), NAME-public
-    (a master's address on the Internet), for when names do not resolve."""
+    (a master's address on the Internet), for when names do not resolve. A master's own name leads
+    to its address on the Internet too."""
     known = os.path.join(fleet.dir, "secrets", "known_hosts")       # through the fleet's folder: the same path after every unlock
     keys = []
     for a in [fleet.defaults.get("admin") or {}] + [h.admin for h in fleet.hosts.values()]:
@@ -2144,7 +2145,9 @@ def ssh_config_text(fleet):
         public = ((h.role_settings_raw or {}).get("vpn-server") or {}).get("wg_host")
         if public:
             more.append(("public", str(public)))
-        out += ["", "Host %s %s" % (name, h.hostname), "    HostName %s" % h.hostname]
+        # a master's own name leads to its VPN server's address, where no sshd answers: here its name
+        # leads to its address on the Internet, as kiwi-server itself reaches it
+        out += ["", "Host %s %s" % (name, h.hostname), "    HostName %s" % (public or h.hostname)]
         for kind, address in more:
             out += ["Host %s-%s" % (name, kind), "    HostName %s" % address]
         out += ["Host %s" % " ".join([name, h.hostname] + ["%s-%s" % (name, kind) for kind, _a in more]),

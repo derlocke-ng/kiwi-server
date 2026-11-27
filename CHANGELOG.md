@@ -10,7 +10,8 @@
   that machine, and nothing was gained: it is the same server and the same keys. Now the
   tunnel stays. Tried with the way to the Internet cut inside the tunnel: before, 23 restarts
   in a minute and the mesh broke off; now none, 230 of 230 pings to the master answered
-  (kiwi-modules 0.134.0). Every node's VPN client restarts once with this apply.
+  (kiwi-modules 0.134.0; `tests/drills/tunnel-steady.sh MACHINE` proves it). Every node's VPN
+  client restarts once with this apply.
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
   authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync

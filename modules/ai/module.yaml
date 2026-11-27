@@ -53,6 +53,8 @@ validate:
     error: "ai.allow: nobody may reach it; kiwi-server fills it in from ai.listen (lan, vpn)"
   - when: "listen | reject('in', ['lan', 'vpn']) | list"
     error: "ai.listen: lan, vpn or both"
+  - when: "top_k < 0 or top_k > 100"
+    error: "ai.top_k: 0 (not fixed) to 100"
 
 # Studio's volume (unsloth_studio) is declared in the compose template: llama.cpp has none
 storage:
@@ -113,6 +115,11 @@ settings:
     label: Studio's own tools
     help: "Web search and running code inside its container, per chat. Off: switched off for every request (--disable-tools)."
     default: false
+  - key: top_k
+    type: int
+    label: Studio's Top-K for every request
+    help: "How many of the likeliest next words a model chooses from, fixed for every request, whatever the page or a program asks. 0: not fixed. Studio runs a model it has no preset for without a limit, and that cost a third of the speed on an RX 9070 XT (91 instead of 125 tokens per second). 20 to 40 suits today's models."
+    default: 0
   - key: models
     type: list
     group: llama.cpp

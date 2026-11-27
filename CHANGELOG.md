@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.311.0 — the local AI: one Top-K for every request
+
+- **`ai.top_k`** (kiwi-modules 0.126.0) fixes Studio's Top-K for every request, whatever the page
+  or a program asks. Studio runs a model it has no preset for without a limit, and that holds
+  the card back. On lemonaide with `top_k: 20` a request without Top-K writes 127 tokens per
+  second instead of 91 with the quant that fits the card whole, and 47.4 instead of 44.8 with
+  `UD-Q4_K_S`. 0, the default, fixes nothing.
+
 ## 2.310.1 — a build of an Armbian image no longer takes the builder's /dev/kvm
 
 - **`armbian.builder`**: the build container has the builder's `/dev`, and packages set up inside

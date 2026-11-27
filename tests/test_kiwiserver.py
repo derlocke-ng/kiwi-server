@@ -16000,6 +16000,10 @@ class TestFirstRunPage(StoreBase):
             time.sleep(0.05)
         self.assertEqual([j["state"] for j in self.c.jobs()].count("ok") >= 3, True)
         self.assertEqual(len(starts()), 4)
+        for _ in range(200):                # a job's state is written a moment before it lets go of its machines
+            if self.c._busy is None:
+                break
+            time.sleep(0.05)
         self.assertIsNone(self.c._busy)
         self.assertEqual(self.c.job(every)["state"] in ("ok", "failed"), True)
         # a job on the machine this page runs on has the node to itself: its apply restarts the page

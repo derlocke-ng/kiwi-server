@@ -76,9 +76,10 @@ L: days. New ideas go to the end of their section.
        about fifteen small calls after the role (3 s).
     b. A rollout by the control node. First step done (2.316.0): `apply --careful`, one machine
        after the other, the least important first, its sites asked, the first failure stops it.
+       The proxy's config is checked before (2.317.0): on the machine, by every apply, before
+       the stack is written (module.yaml `preflight`; tests/drills/preflight.sh).
        Open: the control node doing it by itself after a change or a release (the owner's word
-       is needed: it restarts things without a person), the proxy's config checked before
-       (tests/drills/nginx-check.py as a step of it), and putting a machine back. M
+       is needed: it restarts things without a person), and putting a machine back. M
     c. The fleet says which release it needs. Done in part (2.313.0): an unknown setting or
        module says that an update is the likely cure. Open: fleet-wide commands going on
        without the one machine whose setting is not known; the control node updating itself

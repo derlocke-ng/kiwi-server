@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: reverse-proxy
   title: Web addresses (nginx)
-  version: 1.3.0
+  version: 1.4.0
   description: "nginx with TLS — one server block per service the other modules announce; certificates from the fleet CA unless you bring your own. On a master it lives inside the WireGuard server's network namespace: the admin pages get names, reachable from the mesh only"
   category: core
   node_types: [master, node]
@@ -32,6 +32,12 @@ validate:
   - { when: "public and not network_mode and not via", error: "reverse-proxy.public on a node needs a master that hands its public names on: kiwi-server sets that up in a fleet with a master (via)" }
   - { when: "module_config.get('onion', {}).get('tls') and not onion_fullchain_present", error: "onion.tls needs a certificate for the .onion addresses: kiwi-server issues one from the fleet's CA (reverse-proxy.onion_fullchain, onion_privkey)" }
   - { when: "public and not public_names", error: "reverse-proxy.public: no site has a name outside the fleet's domain (hub_domain, relay_domain)" }
+
+# asked on the machine before an apply writes anything: would nginx start with what comes? One
+# that refuses its config does not start again, and every site of the machine is gone with it
+preflight:
+  - service: "{{ container_prefix }}-nginx"
+    run: "{% if public_names %}/bin/sh /etc/nginx/start.sh{% else %}nginx -t{% endif %}"
 
 templates:
   compose: docker-compose.yml.j2

@@ -27,6 +27,7 @@ KS_STACK_KMODS=('tun')
 KS_STACK_FILES=('docker-compose.yml:0600' 'kiwi/ca/kiwiCA.crt:0644' 'kiwi/env/kn-jdownloader.env:0600' 'kiwi/env/kn-pihole.env:0600' 'kiwi/env/kn-transmission.env:0600' 'kiwi/gw.sh:0755' 'kiwi/pihole-blocklist.sh:0755' 'kn-nginx/fullchain.pem:0644' 'kn-nginx/nginx.conf:0644' 'kn-nginx/privkey.pem:0600' 'kn-pihole/Corefile:0644' 'kn-portainer/admin-password:0600' 'kn-sftp/users.conf:0600' 'kn-vpn-client/post-rules.txt:0644' 'kn-vpn-client/wg0.conf:0600')
 KS_STACK_SERVICES=('kn-vpn-client' 'kn-pihole' 'kn-dns-up' 'kn-dhcphelper' 'kn-nginx' 'kn-transmission' 'kn-jdownloader' 'kn-portainer' 'kn-sftp')
 KS_STACK_URLS=('Pi-hole admin: https://pihole.m1.home/admin (through the reverse proxy), http://127.0.0.1:8080/admin' 'Transmission: https://dl.m1.home' 'JDownloader: https://jd.m1.home' 'Portainer: https://portainer.m1.home or https://127.0.0.1:9443 on the machine' 'SFTP: sftp -P 2224 user@m1.home')
+KS_STACK_CHECKS=('kn-nginx|nginx -t')
 KS_STACK_VPN_CONTAINER='kn-vpn-client'
 KS_STACK_VPN_DEPENDENTS=('kn-transmission' 'kn-jdownloader')
 KS_STACK_MESH_SUBNET='10.8.0.0/16'

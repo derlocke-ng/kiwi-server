@@ -27,6 +27,7 @@ KS_STACK_KMODS=('tun')
 KS_STACK_FILES=('docker-compose.yml:0600' 'kiwi/ca/kiwiCA.crt:0644' 'kiwi/cloud-talk.sh:0755' 'kiwi/env/nextcloud-aio-database.env:0600' 'kiwi/env/nextcloud-aio-imaginary.env:0600' 'kiwi/env/nextcloud-aio-nextcloud.env:0600' 'kiwi/env/nextcloud-aio-redis.env:0600' 'kiwi/env/nextcloud-aio-talk.env:0600' 'kn-nginx/fullchain.pem:0644' 'kn-nginx/nginx.conf:0644' 'kn-nginx/privkey.pem:0600' 'kn-portainer/admin-password:0600' 'kn-vpn-client/post-rules.txt:0644' 'kn-vpn-client/wg0.conf:0600' 'nextcloud-aio-database/kiwi-start.sh:0755' 'nextcloud-aio-nextcloud/kiwi.config.php:0644')
 KS_STACK_SERVICES=('kn-vpn-client' 'kn-nginx' 'nextcloud-aio-apache' 'nextcloud-aio-database' 'nextcloud-aio-nextcloud' 'nextcloud-aio-notify-push' 'nextcloud-aio-redis' 'nextcloud-aio-collabora' 'nextcloud-aio-talk' 'nextcloud-aio-imaginary' 'kn-vault' 'kn-portainer')
 KS_STACK_URLS=('Nextcloud: https://cloud.sh3.home — user admin, the cloud.admin_password setting' 'Vaultwarden: https://vault.sh3.home' 'Portainer: https://portainer.sh3.home or https://127.0.0.1:9443 on the machine')
+KS_STACK_CHECKS=('kn-nginx|nginx -t')
 KS_STACK_VPN_CONTAINER='kn-vpn-client'
 KS_STACK_VPN_DEPENDENTS=()
 KS_STACK_MESH_SUBNET='10.8.0.0/16'

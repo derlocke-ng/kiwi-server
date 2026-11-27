@@ -10,4 +10,6 @@ for name in {{ public_names | join(' ') }}; do
         cp /etc/nginx/privkey.pem "$d/privkey.pem"
     fi
 done
+# asked before an apply (module.yaml preflight): the same stand-ins, then only the test
+[ -z "${KIWI_CHECK:-}" ] || exec nginx -t
 exec nginx -g 'daemon off;'

@@ -123,6 +123,9 @@ logins:                          # what a person signs in to (see below)
 fail2ban:                        # what a wrong login looks like in its log (see below)
   ...
 
+preflight:                       # asked on the machine before an apply writes the stack (see below)
+  ...
+
 settings:                        # the user-facing settings (see below)
   ...
 ```
@@ -285,6 +288,27 @@ The app must log the visitor's real address: nginx sends it as `X-Real-IP` and
 `X-Forwarded-For`, and the app has to trust them from the stack network (for
 Forgejo `REVERSE_PROXY_TRUSTED_PROXIES`). Prove a new entry with
 `tests/drills/fail2ban.py … --app <name>`.
+
+### preflight
+
+A service that does not start with a wrong config says how to ask it before. On the machine,
+before an apply writes anything of the stack, the command runs with `sh -c` in a throwaway
+container made like the service's new one: its image, its mounts and its names, without a
+network. The files the apply brings are mounted from a copy, folders from the machine with
+nothing written back. A command that fails stops the apply with its output, and every service
+runs as before:
+
+```yaml
+preflight:
+  - service: "{{ container_prefix }}-nginx"    # the container whose image and mounts are used
+    run: "nginx -t"                            # exit 0: it takes the new files
+```
+
+Both values are templates; an entry that renders to nothing is left out. The command sees
+`KIWI_CHECK=1`. It is not asked when the image is not on the machine yet (a first apply), or
+when neither the service's files nor its unit change. A question that fails by itself (podman,
+a timeout of 90 seconds, no `sh` in the image) is a warning, not a stop. Podman only.
+The reverse proxy uses it; `tests/drills/preflight.sh` proves it with a broken template.
 
 ## Rendering
 

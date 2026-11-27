@@ -3821,7 +3821,35 @@ def cmd_apply(args):
                 failed.append(h.name)
             print("error: %s: %s" % (h.name, e), file=sys.stderr)
 
-    for wave in apply_waves(fleet, roles, [h for h in hosts if h.name in scripts]):
+    away = []
+    if getattr(args, "careful", False) and not args.ssh and not args.no_run:
+        # one machine after the other, the least important first, each asked before the next; the first
+        # that fails stops it (careful.py)
+        from . import careful as carefulmod
+        todo = carefulmod.order(fleet, roles, [h for h in hosts if h.name in scripts], r, me=os.environ.get("KIWI_CONTROL_HOST"))
+        util.say("one after the other, each asked before the next: %s" % ", ".join(h.name for h in todo))
+        for i, h in enumerate(todo):
+            left = ", ".join(x.name for x in todo[i + 1:]) or "none"
+            try:                        # a machine that does not answer is left out: nothing changes there
+                remote.run(remote.reach(h), "true")
+            except KiwiError as e:
+                away.append(h.name)
+                util.warn("%s does not answer: left out, nothing changed there (%s)" % (h.name, str(e).splitlines()[-1][:120]))
+                continue
+            one(h, "")
+            if h.name in failed:
+                raise KiwiError("%s failed: stopped here. Not touched: %s" % (h.name, left))
+            names = carefulmod.names_of(r, h)
+            bad = carefulmod.answers(h, remote.reach(h), names)
+            if bad:
+                raise KiwiError("%s is applied, and of its sites these do not answer: %s. Stopped here. Not touched: %s"
+                                % (h.name, ", ".join(bad), left))
+            util.say("%s: %s" % (h.name, "its %s" % util.count(len(names), "site answers", "sites answer") if names
+                                 else "it has no site to ask"))
+        hosts_waves = []
+    else:
+        hosts_waves = apply_waves(fleet, roles, [h for h in hosts if h.name in scripts])
+    for wave in hosts_waves:
         if len(wave) == 1 or args.ssh:
             for h in wave:
                 one(h, "")
@@ -3838,6 +3866,8 @@ def cmd_apply(args):
                   % (", ".join(others), "s" if len(others) == 1 else "ve", shown_path(fleet.path)))
     if failed:
         raise KiwiError("failed: %s" % ", ".join(failed))
+    if away:
+        raise KiwiError("did not answer and were left out: %s" % ", ".join(away))
 
 
 def at_once(n, asked=None):
@@ -7099,6 +7129,9 @@ def build_parser():
                    help="every machine with changes not applied yet (its role script is another now), besides those named")
     s.add_argument("--at-once", type=int, metavar="N",
                    help="at most N machines at the same time (default: all that may go together)")
+    s.add_argument("--careful", action="store_true",
+                   help="one machine after the other, the least important first; after each its sites are asked, and the "
+                        "first that fails stops it. For a change nobody tried yet")
     s.add_argument("--ssh", metavar="USER@ADDR", help="how to reach the one host given, instead of admin@hostname")
     s.add_argument("--no-run", action="store_true", help="only put the script in place")
     s.add_argument("--new-host-key", action="store_true",

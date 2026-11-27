@@ -3443,6 +3443,9 @@ def cmd_plan(args):
         for key, word in (("restart", "restarts"), ("new_services", "new"), ("removed_services", "goes")):
             if x[key]:
                 bits.append("%s %s" % (word, " ".join(x[key])))
+        if x.get("names"):
+            bits.append("%s new names as %s" % (util.count(len(x["names"]), "container takes", "containers take"),
+                                                "it runs" if len(x["names"]) == 1 else "they run"))
         if not x["restart"] and x["quadlets"]:
             bits.append("nothing restarts")
         print(head + "; ".join(bits))

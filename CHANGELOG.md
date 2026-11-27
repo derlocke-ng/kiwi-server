@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.312.0 — a new site no longer restarts the machine's containers
+
+- **A new name restarts nothing** (kiwi-stack 0.9.35). A new site gave every container of the
+  machine one more name, and each of them restarted for it: adding a vault to a machine
+  restarted the eleven containers of its Nextcloud. The running containers now take the name as
+  they run; only the reverse proxy restarts. `kiwi-server plan` says so: "restarts kn-nginx;
+  11 containers take new names as they run". Tried on a uCore machine, adding a site and taking
+  it away again. (docs/machines.md, "Running machines")
+- **A faster apply on an encrypted Debian or Armbian machine.** While a one-time disk key for a
+  later install waited, every apply tried three keys on the disk, seconds each by design: 7 s
+  of a 20 s apply that changed nothing. The disk's answer is now kept with the disk's id and
+  asked again only after a new install or with another key.
+- Taking over a v1 installation's data is rehearsed and written down (notes/migration.md):
+  Nextcloud AIO with and without server-side encryption, and Vaultwarden, on a throwaway machine
+  with stand-ins. `tests/drills/v1-standin.sh` makes the stand-in; `tests/drills/vault-client.py`
+  is a small Bitwarden client that makes an account with an item and later checks both.
+
 ## 2.311.0 — the local AI: one Top-K for every request
 
 - **`ai.top_k`** (kiwi-modules 0.126.0) fixes Studio's Top-K for every request, whatever the page

@@ -6270,6 +6270,42 @@ class TestPlan(unittest.TestCase):
         x = planmod.compare(B, want, have, B.services)
         self.assertEqual((x["changed"], x["restart"]), ([{"path": "/usr/local/bin/kiwi-stack", "new": False}], []))
 
+    def test_a_container_whose_quadlet_changed_only_in_its_names_goes_on_running(self):
+        """A new site gives every container of the machine one more name (AddHost). kiwi-stack hands
+        the names to the running containers; the plan says so and counts no restart for them."""
+        class B:
+            files = {"kn-nginx/nginx.conf": ("with the new site", 0o644)}
+            quadlets = {"kn-app.container": "[Container]\nImage=a\nAddHost=cloud.m.home:172.128.0.5\nAddHost=vault.m.home:172.128.0.5\n",
+                        "kn-db.container": "[Container]\nImage=db:2\nAddHost=cloud.m.home:172.128.0.5\nAddHost=vault.m.home:172.128.0.5\n",
+                        "kn-nginx.container": "[Container]\nImage=n\nAddHost=vault.m.home:172.128.0.5\nVolume=/d/kn-nginx/nginx.conf:/etc/nginx/nginx.conf:ro\n"}
+            units = {}
+            services = ["kn-app", "kn-db", "kn-nginx"]
+
+        class H:
+            role_settings = {"docker_dir": "/d"}
+        q = "/etc/containers/systemd/"
+        want = planmod.wanted(H, B)
+        before = {"kn-app.container": "[Container]\nImage=a\nAddHost=cloud.m.home:172.128.0.5\n",        # one name fewer
+                  "kn-db.container": "[Container]\nImage=db:1\nAddHost=cloud.m.home:172.128.0.5\n",      # and another image
+                  "kn-nginx.container": "[Container]\nImage=n\nVolume=/d/kn-nginx/nginx.conf:/etc/nginx/nginx.conf:ro\n"}
+        have = dict(want, **{"/d/kn-nginx/nginx.conf": "old"})
+        for n, text in before.items():
+            have[q + n] = planmod._sha(text)
+            have[planmod.NAMELESS + q + n] = planmod._nameless(text)
+        x = planmod.compare(B, want, have, B.services)
+        self.assertEqual((x["names"], x["restart"]), (["kn-app"], ["kn-db", "kn-nginx"]))    # the proxy: its config changed
+        # a machine that does not say (an older answer): as before, a changed quadlet restarts
+        old = {k: v for k, v in have.items() if not k.startswith(planmod.NAMELESS)}
+        x = planmod.compare(B, want, old, B.services)
+        self.assertEqual((x["names"], x["restart"]), ([], ["kn-app", "kn-db", "kn-nginx"]))
+        # what the machine is asked: the hash of each container quadlet without its AddHost lines
+        asked = []
+        with mock.patch.object(remote, "run", lambda tgt, script, *a, **k: asked.append(script) or
+                               ("H aaa  %skn-app.container\nN bbb  %skn-app.container\n" % (q, q)).encode()):
+            _v, got, _s = planmod.machine("core@m", sorted(want))
+        self.assertIn("grep -v '^AddHost='", asked[0])
+        self.assertEqual((got[q + "kn-app.container"], got[planmod.NAMELESS + q + "kn-app.container"]), ("aaa", "bbb"))
+
 
 class TestBackups(unittest.TestCase):
     def test_snapshots_per_server_newest_first(self):

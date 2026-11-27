@@ -4,7 +4,7 @@ module:
   name: ai
   title: Local AI
   version: 1.0.0
-  description: "A language model at home: Unsloth Studio, its web page and its OpenAI-compatible API (/v1/...) at ai.<hostname>, on the LAN and/or the VPN only, with a key. For a machine with a GPU: AMD (the ROCm image) or NVIDIA (the CUDA one). Front-ends such as opencode talk to its API"
+  description: "A language model at home, at ai.<hostname>, on the LAN and/or the VPN only, with a key. As Unsloth Studio, its web page and its OpenAI-compatible API (/v1/...), for a machine with a big graphics card (AMD or NVIDIA); or as llama.cpp's server alone, the same API and a small chat page, for a machine with a small graphics chip or none. Front-ends such as opencode talk to its API"
   category: productivity
   node_types: [node]
 
@@ -22,29 +22,45 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  models: models.ini.j2
+
+outputs:
+  models: { path: "{{ container_prefix }}-ai/models.ini", mode: 0644, when: lean }
 
 derived:
   ai_host: "ai.{{ hostname }}"
-  ai_image: "{{ image or ('docker.io/unsloth/unsloth-rocm:studio' if gpu == 'amd' else 'docker.io/unsloth/unsloth:latest') }}"
+  studio: "{{ 'yes' if engine == 'studio' else '' }}"
+  lean: "{{ 'yes' if engine == 'llama' else '' }}"
+  # llama.cpp's server: with Vulkan for any graphics chip that has a driver (amd too: no ROCm needed),
+  # with CUDA for NVIDIA, plain for the processor alone
+  llama_image: "ghcr.io/ggml-org/llama.cpp:{{ 'server-cuda' if gpu == 'nvidia' else 'server' if gpu == 'none' else 'server-vulkan' }}"
+  studio_image: "{{ 'docker.io/unsloth/unsloth-rocm:studio' if gpu == 'amd' else 'docker.io/unsloth/unsloth:latest' }}"
+  ai_image: "{{ image or (llama_image if lean else studio_image) }}"
   models_path: "{{ models_dir or docker_dir ~ '/' ~ container_prefix ~ '-ai/models' }}"
   # who reaches the page and the API: the addresses kiwi-server fills in from ai.listen (lan, vpn)
   ai_allow: "{% for c in allow %}allow {{ c }}; {% endfor %}deny all;"
 
 validate:
-  - when: "gpu not in ['amd', 'nvidia']"
-    error: "ai.gpu: amd or nvidia"
+  - when: "engine == 'studio' and gpu not in ['amd', 'nvidia']"
+    error: "ai.gpu: Unsloth Studio needs a graphics card, amd or nvidia. For a machine without one: engine: llama"
+  - when: "engine == 'llama' and not models"
+    error: "ai.models: llama.cpp needs at least one model, by its name on Hugging Face (like ggml-org/gemma-3-4b-it-GGUF:Q4_K_M)"
+  - when: "engine == 'llama' and models | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?$') | list"
+    error: "ai.models: a model is named as on Hugging Face, user/model or user/model:quant (like ggml-org/gemma-3-4b-it-GGUF:Q4_K_M)"
+  - when: "context < 0 or idle_minutes < 0 or threads < 0"
+    error: "ai.context, ai.idle_minutes and ai.threads: 0 or more"
   - when: "not allow"
     error: "ai.allow: nobody may reach it; kiwi-server fills it in from ai.listen (lan, vpn)"
   - when: "listen | reject('in', ['lan', 'vpn']) | list"
     error: "ai.listen: lan, vpn or both"
 
+# Studio's volume (unsloth_studio) is declared in the compose template: llama.cpp has none
 storage:
   bind_mounts:
     - { host: "{{ models_path }}", type: dir, required: true }
-  volumes: [unsloth_studio]
 
 urls:
-  - "Local AI: https://{{ ai_host }} (its API: https://{{ ai_host }}/v1, with a key made on its page: Settings, API)"
+  - "Local AI: https://{{ ai_host }} (its API: https://{{ ai_host }}/v1, with {{ 'the key kiwi-server made: kiwi-server logins' if engine == 'llama' else 'a key made on its page: Settings, API' }})"
 
 nginx:
   upstream:
@@ -55,25 +71,37 @@ nginx:
   proxy_pass: "http://unsloth"
   client_max_body_size: "0"
   proxy_read_timeout: 3600s
-  comment: Local AI (Unsloth Studio)
+  comment: "Local AI ({{ 'llama.cpp' if engine == 'llama' else 'Unsloth Studio' }})"
   extra_directives:
     - "{{ ai_allow }}"
 
+# Studio's accounts and chats. llama.cpp keeps nothing: its models download again, its page's chats are in the browser
 backup:
-  volumes: [unsloth_studio]
+  volumes: ["{{ 'unsloth_studio' if engine == 'studio' else '' }}"]
 
 logins:
   - label: Local AI (Unsloth Studio)
     user: unsloth
     password: studio_password
+    when: studio
     note: "Set when Studio first started. If someone changed it on its page, the new one is not known here. Its API takes a key made on its page (Settings, API), not this password."
+  - label: Local AI (llama.cpp)
+    password: api_key
+    when: lean
+    note: "The key for its API and for its chat page, which asks for it when it opens."
 
 settings:
+  - key: engine
+    type: enum
+    label: Program
+    help: "studio: Unsloth Studio, its page and its API, for a machine with a big graphics card (its image is about 40 GB). llama: llama.cpp's server alone, the same API and a small chat page (its image is under 1 GB), for a machine with a small graphics chip or none: its models are named below."
+    options: [studio, llama]
+    default: studio
   - key: gpu
     type: enum
     label: Graphics card
-    help: "amd: the ROCm image with Studio (unsloth-rocm:studio; /dev/kfd and /dev/dri go into the container; Radeon RX 6000 to 9000, ROCm 7.2). nvidia: the CUDA image (the NVIDIA container toolkit on the machine)."
-    options: [amd, nvidia]
+    help: "amd: a Radeon (Studio: the ROCm image, /dev/kfd and /dev/dri go into the container; RX 6000 to 9000, ROCm 7.2). nvidia: the CUDA image (the NVIDIA container toolkit on the machine). For llama only: vulkan, any graphics chip with a Vulkan driver, such as the one inside a processor (/dev/dri goes into the container); none, the processor alone."
+    options: [amd, nvidia, vulkan, none]
     default: amd
   - key: listen
     type: list
@@ -85,6 +113,30 @@ settings:
     label: Studio's own tools
     help: "Web search and running code inside its container, per chat. Off: switched off for every request (--disable-tools)."
     default: false
+  - key: models
+    type: list
+    group: llama.cpp
+    label: Models
+    help: "For llama: the models, by their names on Hugging Face (user/model:quant, GGUF files). The first is loaded when it starts, another with the request that names it; one is in memory at a time. They download at their first use. On a Ryzen 5750G's graphics chip a 4B model writes 17 tokens per second, an 8B one 9."
+    default: ["ggml-org/gemma-3-4b-it-GGUF:Q4_K_M"]
+  - key: context
+    type: int
+    group: llama.cpp
+    label: Context
+    help: "For llama: how many tokens a model keeps in view, shared by the requests that run at the same time. More takes more memory. 0: as much as the model was trained for."
+    default: 8192
+  - key: idle_minutes
+    type: int
+    group: llama.cpp
+    label: Minutes until a model leaves the memory
+    help: "For llama: a model nobody asked for this long leaves the memory and comes back with the next request (a few seconds). 0: it stays loaded."
+    default: 10
+  - key: threads
+    type: int
+    group: llama.cpp
+    label: Processor threads
+    help: "For llama: how many threads a model may use. 0: llama.cpp decides (all cores). Fewer leaves the machine's other services their share, above all with gpu: none."
+    default: 0
   - key: allow
     type: list
     group: Advanced
@@ -106,3 +158,10 @@ settings:
     label: Studio's password
     help: "For the user unsloth on its page, set when its data is new. Empty: generated from the fleet's seed."
     generate: true
+  - key: api_key
+    type: secret
+    group: Generated
+    label: llama.cpp's API key
+    help: "For llama: the key its API and its chat page ask for. Empty: generated from the fleet's seed."
+    generate: true
+    rotate: restart

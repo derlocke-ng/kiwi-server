@@ -1,3 +1,50 @@
+{% if engine == 'llama' %}
+# ai: llama.cpp's server alone, its API (OpenAI's) and its chat page on port 8000 of the stack network
+services:
+  {{ container_prefix }}-ai:
+    image: {{ ai_image }}
+    container_name: {{ container_prefix }}-ai
+    # Its models are named in models.ini: the first is loaded at the start, another with the request
+    # that names it, one in memory at a time. Its tools, its agent mode, its MCP proxy and its
+    # tunnel (--connect) stay off: nothing here asks for them, and nothing ever should.
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --models-preset
+      - /etc/llama/models.ini
+      - --models-max
+      - "1"
+{% if idle_minutes %}
+      - --sleep-idle-seconds
+      - "{{ idle_minutes * 60 }}"
+{% endif %}
+    environment:
+      - TZ={{ timezone }}
+      # the folder Studio keeps its models in too (Hugging Face's layout): what one downloaded, the other finds
+      - LLAMA_CACHE=/models/hub
+      - LLAMA_API_KEY={{ api_key }}
+{% if gpu != 'none' %}
+    devices:
+{% if gpu == 'nvidia' %}
+      - nvidia.com/gpu=all
+{% else %}
+      - /dev/dri
+{% endif %}
+{% endif %}
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ container_ip }}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    volumes:
+      - {{ models_path }}:/models:z
+      - {{ docker_dir }}/{{ container_prefix }}-ai/models.ini:/etc/llama/models.ini:ro,z
+{% else %}
 # ai: Unsloth Studio, its page and its OpenAI-compatible API on port 8000 of the stack network
 services:
   {{ container_prefix }}-ai:
@@ -37,3 +84,7 @@ services:
     volumes:
       - {{ models_path }}:/workspace/.cache/huggingface:z
       - unsloth_studio:/opt/unsloth-studio
+volumes:
+  unsloth_studio:
+    name: unsloth_studio
+{% endif %}

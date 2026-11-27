@@ -2,6 +2,7 @@
 block, and a benchmark of the models it has.
 
     kiwi-server ai key FLEET MACHINE        the key made on its page (Settings, API), from stdin
+                                            (Unsloth Studio; llama.cpp's key is made by kiwi-server)
     kiwi-server ai connect FLEET MACHINE    opencode's provider block (opencode.json)
     kiwi-server ai bench FLEET MACHINE [MODEL...]
 
@@ -49,8 +50,21 @@ def _ctx(fleet):
     return ctx
 
 
+def lean(host):
+    """Does this machine run llama.cpp's server alone (ai.engine: llama), not Unsloth Studio?"""
+    return ((getattr(host, "module_settings", None) or {}).get("ai") or {}).get("engine") == "llama"
+
+
+def api_key(fleet, host):
+    """The key its API asks for. llama.cpp's is a setting of the module, made from the fleet's seed
+    (the machine's settings resolved); Studio's is made on its page and put in the store by `ai key`."""
+    if lean(host):
+        return str(host.module_settings["ai"].get("api_key") or "")
+    return util.read_text(key_path(fleet, host)).strip() if os.path.isfile(key_path(fleet, host)) else ""
+
+
 def _call(fleet, host, path, body=None, timeout=300, stream=False):
-    key = util.read_text(key_path(fleet, host)).strip() if os.path.isfile(key_path(fleet, host)) else ""
+    key = api_key(fleet, host)
     if not key:
         raise KiwiError("%s: no API key on record: make one on https://ai.%s (Settings, API), then "
                         "kiwi-server ai key FLEET %s" % (host.name, host.hostname, host.name))
@@ -102,7 +116,8 @@ def bench(fleet, host, names=None, say=util.say):
     """Each model: speed (short and long context) and the tasks. Returns the rows, kept in the fleet folder."""
     names = names or models(fleet, host)
     if not names:
-        raise KiwiError("%s: no model is loaded or downloaded yet (its page: choose one)" % host.name)
+        raise KiwiError("%s: no model is loaded or downloaded yet (%s)" % (
+            host.name, "ai.models names them" if lean(host) else "its page: choose one"))
     rows = []
     for m in names:
         say("%s: %s" % (host.name, m))

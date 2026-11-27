@@ -3141,6 +3141,44 @@ def secrets_forget(path, st, host, setting):
              "file, or a generated one" % (host, setting))
 
 
+def secrets_set(path, st, host, setting, read=None):
+    """A module's secret from elsewhere (a bot's token, an API key), typed or piped in, straight
+    into the secret store (its pins, hostname/module/key): it never stands in the fleet file, in a
+    command line or on the screen. One line from stdin, or asked for without showing it."""
+    if not st.is_open():
+        raise KiwiError("the secret store is %s: kiwi-server secrets %s %s first" % (
+            "locked" if st.exists() else "not set up", "unlock" if st.exists() else "init", path))
+    fleet = config.Fleet.load(path)
+    h = fleet.hosts.get(host or "")
+    if h is None:
+        raise KiwiError("no such machine: %s" % host)
+    parts = str(setting or "").split(".")
+    if len(parts) != 2 or not all(re.fullmatch(r"[a-z0-9_-]+", x) for x in parts):
+        raise KiwiError("a module's setting, like vpn-server.wg_password")
+    ms = modset(fleet)
+    mod = ms.get(parts[0]) if parts[0] in ms.modules else None
+    if mod is not None and not any(s.key == parts[1] and s.type == "secret" for s in mod.settings):
+        raise KiwiError("%s has no secret setting %s (its secrets: %s)" % (
+            parts[0], parts[1], ", ".join(s.key for s in mod.settings if s.type == "secret") or "none"))
+    if any(x[0].name == h.name and (x[1], x[2]) == tuple(parts) for x in literal_module_secrets(fleet, ms)):
+        raise KiwiError("%s %s is written in the fleet file, and that one wins: take it out there, or kiwi-server "
+                        "secrets keep %s moves it into the store" % (host, setting, typed_path(path)))
+    if read is None:
+        read = (lambda: sys.stdin.readline()) if not sys.stdin.isatty() else \
+            (lambda: getpass.getpass("%s %s (not shown): " % (host, setting)))
+    value = read().rstrip("\r\n")
+    if not value.strip():
+        raise KiwiError("nothing given: nothing changed")
+    pins_path = fleet.resolve_path("secrets/pins.json")
+    pins = json.loads(util.read_text(pins_path)) if os.path.isfile(pins_path) else {}
+    pins["%s/%s/%s" % (h.hostname, parts[0], parts[1])] = value
+    util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+    st.sync()
+    if mod is None:
+        util.warn("this network knows no module %s yet: kept all the same, for when %s has it" % (parts[0], host))
+    util.say("%s %s is in the secret store (secrets/pins.json); the machine gets it with its next apply" % (host, setting))
+
+
 def secrets_store(args):
     if args.action == "autolock":     # this computer's, for every network on it
         screen = {"on": True, "off": False}.get(args.screen) if args.screen else None
@@ -3164,6 +3202,8 @@ def secrets_store(args):
         return secrets_keep(args.fleet, st)
     if args.action == "forget":
         return secrets_forget(args.fleet, st, args.host, args.setting)
+    if args.action == "set":
+        return secrets_set(args.fleet, st, args.host, args.setting)
     if args.action == "init":
         recovery, saved = st.init()
         util.say("secrets/ is now %s, and open in memory" % store.FILE)
@@ -6859,6 +6899,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
   kiwi-server secrets init|unlock|lock|status <fleet>
                                                 secrets/ as one encrypted file, opened into memory
   kiwi-server secrets admin-password <fleet>    the console password into the store, its hash in the fleet file
+  kiwi-server secrets set <fleet> <host> <module.setting>
+                                                a module's secret (a token, an API key) from stdin into the store
   kiwi-server mtu <fleet> <node|device|address> [--write]
                                                 measure a tunnel's real MTU; say what to set
   kiwi-server vps login <fleet>                 sign in to netcup's API, in a browser
@@ -6985,7 +7027,7 @@ def build_parser():
     s = sub("script", cmd_script); s.add_argument("fleet"); s.add_argument("host")
     s.add_argument("--offline", action="store_true", help="the whole role and its secrets, not only the base system")
     sub("ca", cmd_ca).add_argument("fleet")
-    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password", "keep", "forget"]); s.add_argument("fleet")
+    s = sub("secrets", cmd_secrets); s.add_argument("action", choices=["show", "init", "unlock", "lock", "status", "join", "add", "remove", "copy-key", "recovery", "autolock", "screen-watch", "password", "admin-password", "keep", "forget", "set"]); s.add_argument("fleet")
     s.add_argument("host", nargs="?"); s.add_argument("setting", nargs="?", help="e.g. vpn-server.wg_password, or wg_password")
     s.add_argument("--for", default=None, metavar="TIME", help="unlock: lock again after this long unused (default: autolock's idle, 30m; 0: stay open)")
     s.add_argument("--idle", metavar="TIME", help="autolock: lock after this long unused, e.g. 15m, 1h; 0: never")

@@ -10764,6 +10764,45 @@ class TestLogins(Base):
         with self.assertRaisesRegex(KiwiError, "locked"):
             cli.secrets_forget(f.path, shut, "m1", "sftp.sftp_password")
 
+    def test_a_secret_from_elsewhere_goes_into_the_store_from_stdin(self):
+        """`secrets set`: a token or key piped in lands in the store's pins and in the render, never in the fleet file."""
+        f = self.network()
+        os.makedirs(os.path.join(os.path.dirname(f.path), "secrets"), exist_ok=True)
+        shut = types.SimpleNamespace(is_open=lambda: False, exists=lambda: True)
+        with self.assertRaisesRegex(KiwiError, "locked"):
+            cli.secrets_set(f.path, shut, "m1", "sftp.sftp_password", lambda: "x\n")
+        synced = []
+        open_store = types.SimpleNamespace(is_open=lambda: True, exists=lambda: True, sync=lambda: synced.append(1))
+        with self.assertRaisesRegex(KiwiError, "written in the fleet file"):            # the file would win: say so
+            cli.secrets_set(f.path, open_store, "m1", "sftp.sftp_password", lambda: "x\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.secrets_keep(f.path, open_store)
+        del synced[:]
+        before = util.read_text(f.path)
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            cli.secrets_set(f.path, open_store, "m1", "sftp.sftp_password", lambda: "from-elsewhere-1\n")
+        self.assertEqual(synced, [1])
+        self.assertNotIn("from-elsewhere-1", said.getvalue())                          # never on the screen
+        self.assertEqual(util.read_text(f.path), before)                               # the fleet file is not touched
+        self.assertEqual(self.settings(f.path, "m1")["sftp"]["sftp_password"], "from-elsewhere-1")
+        with self.assertRaisesRegex(KiwiError, "nothing given"):
+            cli.secrets_set(f.path, open_store, "m1", "sftp.sftp_password", lambda: "\n")
+        with self.assertRaisesRegex(KiwiError, "no secret setting"):
+            cli.secrets_set(f.path, open_store, "m1", "sftp.sftp_port", lambda: "x\n")
+        with self.assertRaisesRegex(KiwiError, "no such machine"):
+            cli.secrets_set(f.path, open_store, "nobody", "sftp.sftp_password", lambda: "x\n")
+        with self.assertRaisesRegex(KiwiError, "like vpn-server.wg_password"):
+            cli.secrets_set(f.path, open_store, "m1", "sftp_password", lambda: "x\n")
+        # a module the network does not know yet (a module source not added so far): kept, with a warning
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as warned:
+            cli.secrets_set(f.path, open_store, "m1", "later.token", lambda: "t0k\n")
+        self.assertIn("knows no module later", warned.getvalue())
+        pins = json.loads(util.read_text(os.path.join(os.path.dirname(f.path), "secrets", "pins.json")))
+        self.assertEqual(pins[config.Fleet.load(f.path).hosts["m1"].hostname + "/later/token"], "t0k")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.secrets_forget(f.path, open_store, "m1", "sftp.sftp_password")
+        self.assertNotEqual(self.settings(f.path, "m1")["sftp"]["sftp_password"], "from-elsewhere-1")
+
     def test_a_gateway_with_a_fixed_address_says_how_the_home_uses_it(self):
         f = self.network(m1={"role": "node", "node": self.node_gw(preset="gateway"),
                              "network": {"dhcp": False, "address": "192.168.1.30/24", "gateway": "192.168.1.1"}})

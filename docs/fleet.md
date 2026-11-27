@@ -78,6 +78,14 @@ control page or in the app goes there by itself when the settings are saved. A p
 written in the defaults, for every machine of a role, is not moved: give each machine its
 own, or leave it out to have one generated, which changes it.
 
+A secret that comes from elsewhere, such as a bot's token or an API key, never needs to stand
+in the fleet file at all. `secrets set` reads it from the terminal without showing it, or one
+line from stdin, and puts it into the store:
+
+```bash
+kiwi-server secrets set ~/kiwi/fleet.yaml sh3 backup-server.offsite_password
+```
+
 To take a kept password out again, so that the machine gets a generated one with its next
 apply: the page's *clear* box, *Forget* in the app, or
 

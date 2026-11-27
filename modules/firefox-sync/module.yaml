@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: firefox-sync
   title: Firefox Sync
-  version: 1.0.0
+  version: 1.0.1
   description: "Your own Firefox Sync server: bookmarks, tabs, passwords and history of your Firefox browsers are kept on this machine, not at Mozilla. Mozilla's own server (syncstorage-rs) with a PostgreSQL database. The login still goes through a Mozilla account; what is synced is stored here, encrypted by the browser"
   category: productivity
   node_types: [master, node]

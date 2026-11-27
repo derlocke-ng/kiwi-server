@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: btcpay
   title: Payments (BTCPay)
-  version: 1.0.0
+  version: 1.0.1
   description: "BTCPay Server: take Bitcoin payments yourself, with its own Bitcoin node, invoices, a point-of-sale page as a shop. At pay.<hostname> for the mesh; with the onion module, a hidden service for strangers. The Bitcoin node talks to the world through the VPN, not through the machine's own line"
   category: productivity
   node_types: [node]

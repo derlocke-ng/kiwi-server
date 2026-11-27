@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: downloader
   title: Downloads
-  version: 1.1.0
+  version: 1.1.1
   description: "Transmission and JDownloader inside the VPN client's network namespace — no tunnel, no traffic — with their web UIs behind the reverse proxy"
   category: storage
   node_types: [node]

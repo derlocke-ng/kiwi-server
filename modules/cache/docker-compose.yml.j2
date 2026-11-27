@@ -17,6 +17,13 @@ services:
     networks:
       {{ network_name }}: {}
     restart: unless-stopped
+    # the registry answers
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -33,6 +40,13 @@ services:
     ports:
       - "3142:3142"
     restart: unless-stopped
+    # it answers (any answer: its front page is a 403)
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:3142/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -48,6 +62,13 @@ services:
     networks:
       {{ network_name }}: {}
     restart: unless-stopped
+    # it answers (any answer: a folder without an index is a 404)
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:

@@ -1,10 +1,11 @@
 # Changelog
 
-## 2.318.0 — thirteen parts say whether they work
+## 2.318.0 — the parts say whether they work
 
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
-  authenticator, Immich and Paperless (kiwi-modules 0.128.0). Podman does not take over the
+  authenticator, Immich, Paperless, the caches, Transmission and the databases of Firefox Sync
+  and BTCPay (kiwi-modules 0.128.0 and 0.129.0). Podman does not take over the
   check an image brings: on the machines of one network 88 of 107 containers had none, and the
   status, the page and the runbook saw "running" and no more. Now a service that runs but does
   not do its job is named ("kn-vault reports unhealthy"). Nothing acts on it by itself. These

@@ -16,6 +16,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.parse
 
@@ -537,6 +538,38 @@ def advertisement(server, ring):
     return out
 
 
+# A ring's key and what it offers, asked once per run and in one call: an apply of several machines
+# asked every ring twice for each of them (four rings, eight calls and four seconds per machine).
+_RING_FACTS, _RING_LOCK, _RING_TTL = {}, threading.Lock(), 120
+
+
+def ring_facts(server, ring):
+    """(thumbprint, advertisement) of a ring, from its own host."""
+    key, now = (server.name, ring), time.monotonic()
+    with _RING_LOCK:
+        got = _RING_FACTS.get(key)
+    if got and now - got[0] < _RING_TTL:
+        return got[1], got[2]
+    port = _inner_port(server, ring)
+    out = _in_ring(server, ring, "sh -c 'tang-show-keys %d; echo; curl -sf http://localhost:%d/adv'" % (port, port))
+    thp, _nl, adv = out.strip().partition("\n")
+    thp, adv = (thp.split() or [""])[0], adv.strip()
+    if not thp:
+        raise KiwiError("%s: the ring %s reports no key — is its container running?" % (server.name, ring))
+    try:
+        json.loads(adv)
+    except ValueError:
+        raise KiwiError("%s: the ring %s gave no advertisement — is its container running?" % (server.name, ring))
+    with _RING_LOCK:
+        _RING_FACTS[key] = (now, thp, adv)
+    return thp, adv
+
+
+def _forget_ring(server, ring):
+    with _RING_LOCK:
+        _RING_FACTS.pop((server.name, ring), None)
+
+
 def _on_master(server):
     return "vpn-server" in (getattr(server, "modules", None) or [])
 
@@ -581,11 +614,13 @@ def rotate_ring(server, ring):
     # what tangd-rotate-keys does, which not every tang image has: the keys hidden, new ones made
     _in_ring(server, ring, "sh -c 'set -e; o=$(stat -c %u:%g /db); cd /db; for k in *.jwk; do [ -e \"$k\" ] && mv \"$k\" \".$k\"; done; "
                            "g=$(command -v tangd-keygen || echo /usr/libexec/tangd-keygen); \"$g\" /db; chown -R \"$o\" /db'")
+    _forget_ring(server, ring)
 
 
 def finish_ring(server, ring):
     """The hidden old keys of a ring gone: only the new ones open anything from now on."""
     _in_ring(server, ring, "sh -c 'rm -f /db/.*.jwk'")
+    _forget_ring(server, ring)
 
 
 def _in_ring(server, ring, command):
@@ -615,7 +650,8 @@ def pins(host, servers, rings=None):
             continue
         if server is host:
             raise KiwiError("%s cannot be opened by the ring %s: it serves that ring itself" % (host.name, ring))
-        out.append({"url": url(host, ring, server, port), "thp": thumbprint(server, ring, port), "adv": advertisement(server, ring)})
+        thp, adv = ring_facts(server, ring)
+        out.append({"url": url(host, ring, server, port), "thp": thp, "adv": adv})
     return out
 
 

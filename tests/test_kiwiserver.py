@@ -6952,6 +6952,8 @@ class TestUnlock(Base):
                 self.key_only_undone = tgt
                 return b""
             calls.append((tgt, script, data))
+            if "tang-show-keys" in script and "/adv" in script:     # a ring's key and its offer, in one call
+                return b'THUMBPRINT\n\n{"payload":"x"}\n'
             if "tang-show-keys" in script:
                 return b"THUMBPRINT\n"
             if "/adv" in script:
@@ -6959,6 +6961,7 @@ class TestUnlock(Base):
             if "clevis luks list" in script:
                 return listing.encode()
             return b"updated\n" if "update-initramfs" in script else b""
+        unlock._RING_FACTS.clear()      # what a run remembers of the rings is this test's own
         return calls, mock.patch.object(remote, "run", fake_run), mock.patch.object(remote, "reach", lambda h, o=None: "core@%s" % h.name)
 
     def test_a_ring_at_home_is_relayed_for_a_machine_at_another_site(self):
@@ -7031,7 +7034,12 @@ class TestUnlock(Base):
         with a, b:
             self.assertTrue(unlock.bind(f.hosts["lychee"], "core@lychee", self.servers(f)))
         self.assertEqual(calls[0][0], "core@papaya")
-        self.assertIn("kn-tang-infra tang-show-keys", calls[0][1])
+        self.assertIn("kn-tang-infra sh -c 'tang-show-keys 7500; echo; curl -sf http://localhost:7500/adv'", calls[0][1])
+        # a second machine bound in the same run does not ask the ring again
+        asked = len([c for c in calls if "tang-show-keys" in c[1]])
+        with a, b:
+            unlock.pins(f.hosts["lychee"], self.servers(f))
+        self.assertEqual(len([c for c in calls if "tang-show-keys" in c[1]]), asked)
         key, dev, tree, old = calls[-1][2].decode().splitlines()
         self.assertEqual((key, dev, old), ("thediskkey", "/dev/vda5", ""))
         self.assertEqual(json.loads(tree), {"t": 1, "pins": {"tang": [{"url": "http://192.168.2.30:7500", "adv": {"payload": "x"}}]}})

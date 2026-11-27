@@ -16677,6 +16677,23 @@ class TestRecovery(Base):
         self.assertNotIn(key, said)
         self.assertFalse(os.path.exists(ai.key_path(f, f.hosts["papaya"])))
 
+    def test_a_setting_this_release_does_not_know_points_at_an_update(self):
+        """A fleet saved by a newer kiwi-server carries settings an older one does not know. The older
+        one says that an update is the likely cure, with its own release (27 Nov 2026: `ai.top_k`,
+        tried from a checkout, and the installed release refused the whole fleet with a bare
+        "unknown setting")."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        node = dict(pap["node"], modules=list(pap["node"]["modules"]) + ["ai"], ai={"gpu": "amd", "from_a_later_release": 1})
+        f = self.network(papaya=dict(pap, node=node))
+        errs = cli.check(f, self.roles, self.ms, [f.hosts["papaya"]], strict=False)
+        self.assertTrue(any("unknown setting(s): from_a_later_release" in e for e in errs), errs)
+        self.assertIn("this is kiwi-server %s" % VERSION, errs[-1])
+        self.assertIn("kiwi update kiwi-server", errs[-1])
+        # a fleet with another kind of mistake is not told to update
+        errs = cli.check(net, self.roles, self.ms, list(net.hosts.values()), strict=False)
+        self.assertFalse([e for e in errs if "kiwi update" in e], errs)
+
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]
         bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",

@@ -30,6 +30,8 @@ templates:
   accounts_service: kn-cloud-accounts.service.j2
   folders_service: kn-cloud-folders.service.j2
   db_start: db-start.sh.j2
+  talk_script: cloud-talk.sh.j2
+  talk_service: kn-cloud-talk.service.j2
 
 derived:
   has_folders: "{{ 'yes' if shared_folders or read_only_folders else '' }}"
@@ -39,6 +41,9 @@ outputs:
   db_start: { path: "nextcloud-aio-database/kiwi-start.sh", mode: 0755 }
   folders_script: { path: "kiwi/cloud-folders.sh", mode: 0755, when: has_folders }
   folders_service: { kind: host_unit, name: kn-cloud-folders.service, when: has_folders }
+  # Talk's servers under a name the Nextcloud no longer has go (after a change of its name)
+  talk_script: { path: "kiwi/cloud-talk.sh", mode: 0755, when: talk }
+  talk_service: { kind: host_unit, name: kn-cloud-talk.service, when: talk }
   # the network's accounts sign people in here (kiwi-server accounts connect)
   accounts_script: { path: "kiwi/cloud-accounts.sh", mode: 0700, when: accounts_client }
   accounts_env: { path: "kiwi/cloud-accounts.env", mode: 0600, when: accounts_client }

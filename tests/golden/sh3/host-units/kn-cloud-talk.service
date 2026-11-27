@@ -1,0 +1,17 @@
+[Unit]
+Description=Nextcloud Talk's servers under its present name only (sh3.home)
+Documentation=https://github.com/derlocke-ng/kiwi-server
+# podman: the containers are systemd units themselves; kiwi-stack.service starts their target
+After=kiwi-stack.service
+Wants=kiwi-stack.service
+
+[Service]
+# exec, not oneshot: boot does not wait for Nextcloud
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash /home/user/docker/kiwi/cloud-talk.sh
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

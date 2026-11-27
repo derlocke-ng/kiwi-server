@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+# Talk's servers under a name this Nextcloud no longer has. After its name changed (cloud.nc_hostname,
+# or its data came from an installation under another name), Talk keeps the old signalling, STUN and
+# TURN servers beside the new ones, the old ones first, and a call tries a server that is gone.
+# kn-cloud-talk.service runs this after every start of the stack: what is not under
+# {{ nc_hostname or 'cloud.' ~ hostname }} goes; the entries under it are the containers' own to set.
+set -euo pipefail
+
+WWW_DATA=33
+me={{ nc_hostname or 'cloud.' ~ hostname }}
+occ() { {{ runtime }} exec --user "$WWW_DATA" nextcloud-aio-nextcloud php /var/www/html/occ "$@"; }
+
+# Up in a minute after a restart, up to half an hour on the very first start
+for _ in {1..360}; do
+    status=$(occ status --output=json 2>/dev/null || true)
+    [[ $status == *'"installed":true'*'"maintenance":false'*'"needsDbUpgrade":false'* ]] && break
+    sleep 5
+done
+occ talk:stun:list >/dev/null 2>&1 || exit 0      # Talk is not installed (yet)
+
+# what is under this Nextcloud's name stays
+mine() { local h=${1#*://}; h=${h%%/*}; [[ ${h%:*} == "$me" ]]; }
+
+n=0
+while read -r server; do            # "  - name:3478"
+    [[ -n $server ]] && ! mine "$server" || continue
+    occ talk:stun:delete "$server" >/dev/null && n=$((n + 1))
+done < <(occ talk:stun:list | sed -n 's/^ *- //p')
+while read -r schemes server protocols; do
+    [[ -n $server ]] && ! mine "$server" || continue
+    occ talk:turn:delete "$schemes" "$server" "$protocols" >/dev/null && n=$((n + 1))
+done < <(occ talk:turn:list | awk '
+    $1 == "schemes:" { s = $2 } $1 == "server:" { h = $2 } $1 == "protocols:" { if (h != "") print s, h, $2; s = h = "" }')
+while read -r server; do            # "    server: https://name/standalone-signaling/"
+    [[ -n $server ]] && ! mine "$server" || continue
+    occ talk:signaling:delete "$server" >/dev/null && n=$((n + 1))
+done < <(occ talk:signaling:list | sed -n 's/^ *server: //p')
+if (( n )); then echo "Talk: $n server(s) under a name this Nextcloud no longer has taken out (it is $me now)"; fi

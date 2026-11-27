@@ -1146,6 +1146,9 @@ def warn_data_on_master(h, roles, ms):
             h.warnings.append(msg)
 
 
+NOT_KNOWN_HERE = ("unknown setting", "unknown key", "unknown module")
+
+
 def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
     errs = list(fleet.errors) + config.unknown_keys(getattr(fleet, "defaults_raw", {}), roles, "defaults")
     errs += partstandby.errors(fleet, roles)
@@ -1160,6 +1163,14 @@ def check(fleet, roles, ms, hosts, porcelain=False, strict=True):
         errs += settings_errors(roles, ms, h)
         warn_literal_secrets(h, ms)
         warn_data_on_master(h, roles, ms)
+    if errs and any(k in e for e in errs for k in NOT_KNOWN_HERE):
+        # a setting or module this release does not know: most often the fleet was saved by a newer
+        # one (another computer, the control node), and the cure is an update, not an edit of the file
+        # (27 Nov 2026: one new setting on one machine, and the installed release refused the fleet)
+        errs.append("this is kiwi-server %s. What it does not know usually comes from a newer release that saved this "
+                    "fleet, on another computer or on the control node: update kiwi-server on this computer "
+                    "(kiwi update kiwi-server) and run the command again. If nothing newer exists, it is a typing error"
+                    % VERSION)
     if errs and strict:
         if porcelain:
             print(json.dumps({"ok": False, "errors": errs}, indent=2))

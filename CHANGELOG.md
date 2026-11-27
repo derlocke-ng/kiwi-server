@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.309.0 — a lean local AI
+
+- **`ai.engine: llama`**: the `ai` module runs llama.cpp's server alone in place of Unsloth
+  Studio, for a machine with a small graphics chip or none: the same API and a small chat page,
+  from an image under 1 GB. `gpu: vulkan` (the chip inside a processor, any with a Vulkan
+  driver) or `none`; `models` by their names on Hugging Face, one in memory at a time, out of
+  the memory after `idle_minutes` without a request (kiwi-modules 0.125.0; docs/roles.md,
+  "A local AI").
+- Its API key is made from the fleet's seed: `kiwi-server ai connect` and `ai bench` use it,
+  `logins` shows it, `ai key` has nothing to take and says so.
+- `kiwi-server ai` no longer answers "does not run the ai module" for a machine that does: it
+  looked before the machine's modules were known.
+- Measured on a Ryzen 7 PRO 5750G: a 4B model writes 17 tokens per second on its graphics chip,
+  an 8B one 9.5. Tried with the processor alone on a Debian node and with Vulkan on a
+  Radeon RX 9070 XT (uCore, Podman, SELinux). Not tried: `gpu: nvidia`.
+- `tests/drills/ai-lean.sh FLEET MACHINE [ADDRESS]` checks a machine's lean AI: its page, the
+  key, the models, an answer, and that a model leaves the memory when idle and comes back.
+
 ## 2.308.2 — an apply no longer cuts the containers' DNS
 
 - On a Podman machine with firewalld (uCore), every apply reloaded firewalld to open the

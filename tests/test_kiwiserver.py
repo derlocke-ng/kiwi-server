@@ -16000,6 +16000,10 @@ class TestFirstRunPage(StoreBase):
             time.sleep(0.05)
         self.assertEqual([j["state"] for j in self.c.jobs()].count("ok") >= 3, True)
         self.assertEqual(len(starts()), 4)
+        for _ in range(200):                # a job's state is written a moment before it lets go of its machines
+            if self.c._busy is None:
+                break
+            time.sleep(0.05)
         self.assertIsNone(self.c._busy)
         self.assertEqual(self.c.job(every)["state"] in ("ok", "failed"), True)
         # a job on the machine this page runs on has the node to itself: its apply restarts the page
@@ -16571,6 +16575,32 @@ class TestRecovery(Base):
         self.assertEqual(len(f.hosts["papaya"].module_settings["ai"]["allow"]), 1)
         self.assertEqual([e for e in cli.settings_errors(self.roles, self.ms, f.hosts["papaya"]) if "ai." in e], [])
 
+    def test_a_lean_local_ai_gets_its_key_from_the_seed(self):
+        """ai.engine: llama (docs/design/ai.md): llama.cpp's server alone on a machine without a big
+        graphics card. Its key is made from the seed: `ai key` has nothing to take, and says so."""
+        from kiwiserver import ai
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        node = dict(pap["node"], modules=list(pap["node"]["modules"]) + ["ai"], ai={"engine": "llama", "gpu": "none"})
+        f = self.network(papaya=dict(pap, node=node))
+        r = cli.Renderer(f, self.roles, os.path.join(self.tmp, "out"), None, self.ms)
+        b = r.script(f.hosts["papaya"])[1]
+        svc = b.compose["services"]["kn-ai"]
+        self.assertEqual(svc["image"], "ghcr.io/ggml-org/llama.cpp:server")
+        self.assertNotIn("devices", svc)
+        key = f.hosts["papaya"].module_settings["ai"]["api_key"]
+        self.assertRegex(key, r"^[A-Za-z0-9]{16,}$")
+        self.assertTrue(ai.lean(f.hosts["papaya"]))
+        self.assertEqual(ai.api_key(f, f.hosts["papaya"]), key)
+        self.assertEqual(len(f.hosts["papaya"].module_settings["ai"]["allow"]), 2)      # its LAN and the VPN, as with Studio
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["ai", "key", f.path, "papaya"]), 0)
+        said = out.getvalue() + err.getvalue()
+        self.assertIn("there is none to put in", said)
+        self.assertNotIn(key, said)
+        self.assertFalse(os.path.exists(ai.key_path(f, f.hosts["papaya"])))
+
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]
         bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",
@@ -17069,6 +17099,18 @@ class TestLocalAI(unittest.TestCase):
         p = block["provider"]["kiwi-desk"]
         self.assertEqual(p["options"], {"baseURL": "https://ai.desk.home/v1", "apiKey": "{env:KIWI_AI_DESK_KEY}"})
         self.assertEqual(sorted(p["models"]), ["gemma-3-12b", "qwen3-14b"])
+
+    def test_the_key_is_the_stores_for_studio_and_the_fleets_for_llama_cpp(self):
+        from kiwiserver import ai
+        tmp = tempfile.mkdtemp()
+        fleet, h = self.host_and_fleet(tmp)
+        self.assertEqual((ai.lean(h), ai.api_key(fleet, h)), (False, ""))       # Studio, no key put in yet
+        os.makedirs(os.path.join(tmp, "secrets", "ai"))
+        with open(ai.key_path(fleet, h), "w") as f:
+            f.write("key-made-on-studios-page\n")
+        self.assertEqual(ai.api_key(fleet, h), "key-made-on-studios-page")
+        h.module_settings = {"ai": {"engine": "llama", "api_key": "key-from-the-seed-0123456789"}}
+        self.assertEqual((ai.lean(h), ai.api_key(fleet, h)), (True, "key-from-the-seed-0123456789"))
 
     def test_the_benchmark_times_each_model_and_checks_the_known_answers(self):
         from kiwiserver import ai

@@ -1,0 +1,20 @@
+; The models llama.cpp's server offers (the ai module, engine: llama). Rendered by kiwi-server: edit ai.models.
+version = 1
+
+[*]
+{% if context %}
+ctx-size = {{ context }}
+{% endif %}
+{% if threads %}
+threads = {{ threads }}
+{% endif %}
+; a model named here and already downloaded is listed once
+dedup-cache-models = true
+{% for m in models %}
+
+[{{ m }}]
+hf-repo = {{ m }}
+{% if loop.first %}
+load-on-startup = true
+{% endif %}
+{% endfor %}

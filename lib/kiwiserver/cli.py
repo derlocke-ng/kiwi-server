@@ -5748,10 +5748,16 @@ def cmd_history(args):
 def cmd_ai(args):
     """The local AI (docs/design/ai.md): its key into the store, opencode's provider block, a benchmark."""
     from . import ai as aimod
-    fleet, _roles, _ms = load(args)
+    fleet, roles, ms = load(args)
     h = fleet.select([args.host])[0]
+    if h.role in roles:
+        rolesmod.resolve_settings(roles[h.role], h, ms)     # its modules; ai.engine, and llama.cpp's key from the seed
     if "ai" not in (h.modules or []):
         raise KiwiError("%s does not run the ai module" % h.name)
+    if args.what == "key" and aimod.lean(h):
+        util.say("%s runs llama.cpp's server: its key is made by kiwi-server, there is none to put in "
+                 "(kiwi-server logins FLEET %s shows it)" % (h.name, h.name))
+        return
     if args.what == "key":
         key = sys.stdin.readline().strip() if not sys.stdin.isatty() else getpass.getpass("Its API key (from its page, Settings, API): ").strip()
         if not re.fullmatch(r"[A-Za-z0-9_.-]{16,200}", key):

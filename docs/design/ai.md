@@ -67,6 +67,43 @@ through sh3's files: mounted read only on that computer.
   `disk:` (never `auto`: the 2 TB one holds his own system, Bluefin-DX, and is not touched). uCore
   brings its own boot partition on that disk; the firmware's boot menu picks which system starts.
 
+## llama.cpp alone: `engine: llama`
+
+Asked for by the owner on 27 November 2026: a small model on sh3 as a backup, for small tasks
+and talk, on the graphics chip inside its processor. Studio does not fit there: its image is
+about 40 GB and it wants a graphics card.
+
+Status: built (2.309.0, kiwi-modules 0.125.0). Tried on a Debian node with the processor alone,
+the Vulkan image on the workstation; not yet run on sh3 through the module (sh3 is still a v1
+machine).
+
+- **What runs**: llama.cpp's server from its own image (`ghcr.io/ggml-org/llama.cpp`):
+  `server-vulkan` for `gpu: vulkan` and `amd` (`/dev/dri` into the container), `server` for
+  `none`, `server-cuda` for `nvidia`. The same API as Studio on the same port, and its chat page.
+- **Models**: named in `ai.models` as on Hugging Face (`user/model:quant`), written into a
+  preset file (`models.ini`). The server runs in its several-models mode with one model in
+  memory at a time: the first is loaded at the start, another with the request that names it.
+  They download at their first use, into the folder Studio uses too and in the same layout, so
+  what one downloaded the other finds.
+- **Memory**: a model nobody asked for `idle_minutes` leaves the memory and comes back with the
+  next request (2 to 3 seconds for a 4B model from the page cache). sh3 runs other services:
+  nothing is held that is not used.
+- **Its key** is a setting made from the seed (`api_key`), not one made on a page: `ai connect`
+  and `ai bench` take it from the fleet, `logins` lists it, `ai key` has nothing to take.
+- **Off, always**: its tools (they read and write files and run commands), its agent mode, its
+  MCP proxy, and `--connect` (a tunnel). Nothing in the module can switch them on.
+- **Backup**: nothing. Models download again, and the page keeps its chats in the browser.
+
+Measured on sh3 (Ryzen 7 PRO 5750G, Vega 8 through Vulkan, 27 November 2026), tokens per second:
+
+| Model (Q4_K_M) | Writes, graphics chip | Writes, processor | Reads, graphics chip | Reads, processor |
+|---|---|---|---|---|
+| Gemma 3 4B | 17.2 | 15.7 | 227 | 100 |
+| Qwen3 8B | 9.5 | 8.1 | 103 | 52 |
+
+The processor-only run took all eight cores (load 8). Switching between the two models took 2
+seconds.
+
 ## Open
 
 - Which models.

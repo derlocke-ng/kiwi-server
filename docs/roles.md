@@ -463,6 +463,44 @@ kiwi-server ai bench ~/kiwi/fleet.yaml desk        # each model: first token, to
 and machines over time. `on_demand: true` makes a machine that is off a normal state: no alarm, no
 backup overdue; Wake starts it.
 
+### On a machine without a big graphics card
+
+Unsloth Studio needs a graphics card, and its image is about 40 GB. With `engine: llama` the
+module runs llama.cpp's server alone instead. It offers the same API and a small chat page, and
+its image is under 1 GB. This suits a server that has only the graphics chip inside its
+processor, or none: a small model for short tasks, or one that answers while the big machine
+is off.
+
+```yaml
+lychee:
+  node:
+    modules: [vpn-client, reverse-proxy, ai]
+    ai:
+      engine: llama
+      gpu: vulkan
+      models: ["ggml-org/gemma-3-4b-it-GGUF:Q4_K_M", "unsloth/Qwen3-8B-GGUF:Q4_K_M"]
+```
+
+- `gpu`: `vulkan` uses any graphics chip that has a Vulkan driver (`/dev/dri` goes into the
+  container); `amd` means the same with this engine. `none` uses the processor alone. `nvidia`
+  takes the CUDA image.
+- `models`: the models by their names on Hugging Face, `user/model:quant`, as GGUF files. The
+  first one is loaded when the container starts. Another is loaded by the request that names
+  it, and one model is in memory at a time. A model is downloaded at its first use.
+- `idle_minutes` (10): a model that nobody asked for this long leaves the memory. The next
+  request loads it again, which takes a few seconds. `0` keeps it loaded.
+- `context` (8192) is the number of tokens a model keeps in view. `threads` limits the
+  processor threads it uses, so that the machine's other services keep their share.
+- The API key is made by kiwi-server from the fleet's seed. `kiwi-server logins` shows it,
+  `ai connect` and `ai bench` use it, and `ai key` is not needed. The chat page asks for the
+  same key.
+- llama.cpp's own tools, its agent mode, its MCP proxy and its tunnel are off.
+
+Measured on 27 November 2026 on a Ryzen 7 PRO 5750G with 64 GB of memory: on its graphics chip
+a 4B model writes 17 tokens per second and an 8B model 9.5; on the processor alone 15.7 and
+8.1. Tested with `gpu: none` on a Debian node, and the Vulkan image on a uCore machine with a
+Radeon RX 9070 XT. `gpu: nvidia` is not tested yet.
+
 ## Writing a role
 
 A role is `roles/<name>/` with `role.yaml` and `apply.sh`. A module role

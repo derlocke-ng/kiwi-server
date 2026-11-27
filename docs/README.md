@@ -45,6 +45,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Controllers](design/controllers.md) | several computers managing one fleet: join, sync, rotation |
 | [Local first](design/local-first.md) | the LAN cache, network installs |
 | [A standby master](design/standby.md) | the same master on a second machine, which takes over when the first is gone |
+| [A local AI](design/ai.md) | the `ai` module: Unsloth Studio on a machine with a graphics card, or llama.cpp alone on one without |
 | [Encrypted disks by default](design/encryption.md) | every target encrypted, and how each opens at boot |
 | [Who opens whom](design/unlock.md) | the ways a disk opens at boot, openers, one picture for page and apps |
 | [The page and the apps as server management](design/ui.md) | the machines table by site, a machine's story and states, one name per thing, speed, the app on the shared kit |

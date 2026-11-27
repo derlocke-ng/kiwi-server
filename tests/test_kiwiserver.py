@@ -14658,6 +14658,13 @@ class TestPublicPages(unittest.TestCase):
             self.assertEqual(self.at(path)[0], 404, path)
         self.assertEqual(self.at("/start/public", "POST")[0], 404)
 
+    def test_the_health_path_answers(self):
+        """/healthz is what the container's own health check asks. It answered with an error 500:
+        the public pages lacked `damaged`, and nothing asked that path until the check came."""
+        code, body = self.at("/healthz")
+        self.assertEqual(code, 200, body)
+        self.assertEqual((json.loads(body)["ok"], json.loads(body)["locked"], json.loads(body)["damaged"]), (True, False, False))
+
 
 class TestPublicWebsite(TestPublicPages):
     """The website from the public pages' own container, as from the control part before."""

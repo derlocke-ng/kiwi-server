@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.318.0 — thirteen parts say whether they work
+
+- **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
+  VPN server, the control page and the public pages, every Tang ring, git, paste, the
+  authenticator, Immich and Paperless (kiwi-modules 0.128.0). Podman does not take over the
+  check an image brings: on the machines of one network 88 of 107 containers had none, and the
+  status, the page and the runbook saw "running" and no more. Now a service that runs but does
+  not do its job is named ("kn-vault reports unhealthy"). Nothing acts on it by itself. These
+  containers restart once with the apply that brings the checks.
+- **A careful apply** (`--careful`) also stops when a service of the machine it just applied
+  reports unhealthy.
+- The public pages' own `/healthz` answered with an error 500 since the pages got a container
+  of their own; nothing asked it until the health check did.
+- docs/modules.md says how to write a health check and who reads it.
+
 ## 2.317.0 — the reverse proxy is asked before an apply writes anything
 
 - Before an apply writes a machine's stack, nginx tests the config it would get, in a throwaway

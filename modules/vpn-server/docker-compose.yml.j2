@@ -63,6 +63,13 @@ services:
       - net.ipv4.ip_nonlocal_bind=1
 {% endif %}
     restart: unless-stopped
+    # the WireGuard interface is up (the image's own check)
+    healthcheck:
+      test: ["CMD-SHELL", "wg show | grep -q interface"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:

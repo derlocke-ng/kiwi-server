@@ -54,6 +54,11 @@ class PublicControl:
     def locked(self):
         return False
 
+    def damaged(self):
+        # nothing here can be: there is no fleet in this container. /healthz asks (it answered
+        # with an error 500 until 2.318.0, found when the container got a health check)
+        return []
+
     def __getattr__(self, name):
         # anything else of a control part is not here: a route that asks for it is not a public one
         raise AttributeError("not on the public pages: %s" % name)

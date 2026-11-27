@@ -60,6 +60,13 @@ services:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
     restart: unless-stopped
+    # its page answers
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8000"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     logging:
       driver: json-file
       options:
@@ -80,6 +87,13 @@ services:
     networks:
       {{ network_name }}: {}
     restart: unless-stopped
+    # it answers
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -98,6 +112,13 @@ services:
     networks:
       {{ network_name }}: {}
     restart: unless-stopped
+    # the database takes connections
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:

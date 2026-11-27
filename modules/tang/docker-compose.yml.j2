@@ -18,6 +18,13 @@ services:
       - "{{ port }}:7500"
 {% endif %}
     restart: unless-stopped
+    # it hands out its keys
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:{{ port if node_type == 'master' else 7500 }}/adv"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     logging:
       driver: json-file
       options:

@@ -230,9 +230,10 @@ It applies one machine after the other, the least important first: the machines 
 depends on, then the ones that answer for names or open disks, then the masters, and the
 control node last when it runs the apply itself. Of two machines that share a moving address,
 the one that waits goes before the one that holds it. After each machine its own sites are
-asked on the machine until they answer, for up to two minutes. The first machine that fails, or
-whose sites do not answer, stops the apply, and the message names the machines that were not
-touched. A machine that does not answer at all is left out and named at the end.
+asked on the machine until they answer, for up to two minutes, and its services until none
+reports unhealthy. The first machine that fails, whose sites do not answer or that has an
+unhealthy service stops the apply, and the message names the machines that were not touched. A
+machine that does not answer at all is left out and named at the end.
 
 The app's **Apply** offers them along; the page has **Save & apply** in the
 settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same

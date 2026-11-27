@@ -18,6 +18,11 @@ Volume=/home/user/docker/kn-nginx/fullchain.pem:/etc/nginx/fullchain.pem:ro,z
 Volume=/home/user/docker/kn-nginx/privkey.pem:/etc/nginx/privkey.pem:ro,z
 PublishPort=80:80
 PublishPort=443:443
+HealthCmd=["nc","-z","127.0.0.1","443"]
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=20s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: authenticator
   title: Authenticator (2FAuth)
-  version: 1.0.0
+  version: 1.0.1
   description: "The six-digit codes of your two-factor logins, in a page of your own instead of an app on one phone: 2FAuth keeps the accounts (scan a QR code or type the secret), shows the codes, groups them, and takes them in from Google Authenticator, Aegis, 2FAS and others. At auth.<hostname>, for people on the VPN"
   category: security
   node_types: [master, node]

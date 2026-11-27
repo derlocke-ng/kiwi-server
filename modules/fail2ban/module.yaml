@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: fail2ban
   title: Ban list (fail2ban)
-  version: 1.0.0
+  version: 1.0.1
   description: "Bans addresses that keep failing to log in over SSH, and slows down any one address that opens SSH connections too fast; on a master with public sites also scanners and bad requests there. fail2ban runs on the host's network and reads sshd's log, which a small host unit copies out of the journal, and nginx's."
   category: security
   node_types: [master, node]

@@ -16,6 +16,11 @@ Environment=PGID=0
 Volume=/home/user/docker/km-fail2ban/config:/config:z
 Volume=/home/user/docker/km-fail2ban/init:/custom-cont-init.d:ro,z
 Volume=/var/log/kiwi:/var/log/kiwi:ro,z
+HealthCmd=["fail2ban-client","ping"]
+HealthInterval=60s
+HealthTimeout=10s
+HealthStartPeriod=60s
+HealthRetries=3
 LogDriver=journald
 
 [Service]

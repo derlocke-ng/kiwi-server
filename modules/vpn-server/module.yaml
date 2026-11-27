@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: vpn-server
   title: VPN server (WireGuard)
-  version: 1.1.0
+  version: 1.1.1
   description: "wg-easy — the entry point for every client and node; its default route points at the VPN client for the double hop"
   category: core
   node_types: [master]

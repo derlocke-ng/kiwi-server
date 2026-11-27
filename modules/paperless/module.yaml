@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: paperless
   title: Documents (Paperless)
-  version: 1.0.0
+  version: 1.0.1
   description: "Paperless-ngx, scanned documents with OCR and full-text search, behind the reverse proxy at paperless.<hostname>"
   category: productivity
   node_types: [node]

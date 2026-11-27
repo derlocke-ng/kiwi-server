@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft world on lemonaide; the Steam games' saves not yet |
+| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft world and an Enshrouded world on lemonaide; Abiotic Factor and Satisfactory not yet |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -139,18 +139,32 @@ with the folder; v2 starts with sign-ups off.
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. v1 keeps one folder per server under `~/docker/games`; the `games` module keeps the
 save apart from the game's files, under `<docker folder>/kn-games/<server>/`. Where each goes
-(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft rehearsed
-that night, see below; the others not, each is gigabytes):
+(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft and
+Enshrouded rehearsed that night, see below; Abiotic Factor and Satisfactory not):
 
 | Game | v1's folder | goes into `kn-games/<server>/` |
 |---|---|---|
-| Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame` | `savegame` |
+| Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame`; the rest of `game-enshrouded` | `savegame`; the rest into `kn-games-files/<server>/game` |
 | Minecraft, three worlds | `game-minecraft*/data`, `game-minecraft*/modpacks` | `data`; the pack into `kn-games-files/<server>/modpacks` |
-| Abiotic Factor | `game-abiotic/data` | `saves` (to check: that v1's `data` is the game's `Saved` folder) |
+| Abiotic Factor | `game-abiotic/data` | `saves` (v1's `data` is the game's `Saved` folder: it holds `SaveGames`, `Config`, `Logs`; seen 27 Nov) |
 | Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder |
 
 The game's own files download again by themselves. Checked by starting the server and seeing
 the world's name.
+
+*Enshrouded, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/enshrouded-takeover.sh, all
+passed). v1 runs the image the catalog uses (mornedhels/enshrouded-server) with one folder
+mounted at `/opt/enshrouded`; the world is the file `server/savegame/world0.ksd` (written when
+the server stops, older copies in `savegame/backup`). The steps: stop the old server; move
+`game-enshrouded/server/savegame` to `<docker folder>/kn-games/<server>/savegame`, and the rest
+of `game-enshrouded` (the game, 8 G) to `<docker folder>/kn-games-files/<server>/game`; the
+server in the fleet file (`enshrouded: {game: enshrouded, name: …, password: …}`) and apply. The
+new server was online 116 seconds after the apply, without downloading the game again, and its
+log said it found the old world ("Found file 'world0.ksd'"). Without the game's folder it works
+the same and downloads 8 G first. v1's server also has roles with passwords of their own
+(`SERVER_ROLE_0_NAME`, `SERVER_ROLE_0_PASSWORD` and so on, read as names only): they go into
+the server's `env:` as they are; their values are in v1's container, `docker inspect
+game-enshrouded` shows them to the owner.
 
 *Minecraft, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/minecraft-takeover.sh, 14 of
 14). v1's three folders are servers of the image the catalog uses too (itzg/minecraft-server)

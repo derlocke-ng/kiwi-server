@@ -85,6 +85,13 @@ services:
     image: {{ join_image }}
     container_name: {{ container_prefix }}-xmpp-join
     restart: unless-stopped
+    # the sign-up page answers
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/join/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     command: ["signup", "serve", "--state", "/state", "--ejabberd", {{ pages | tojson | tojson }},
               "--ways", "{{ join_ways }}", "--brand", {{ (main_host) | tojson }}, "--terms-file", "/state/terms.txt", "--listen", "0.0.0.0:8080"]
     networks:

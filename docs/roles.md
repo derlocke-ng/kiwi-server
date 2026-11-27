@@ -448,6 +448,8 @@ desk:
 
 - `gpu`: `amd` (the ROCm image; Radeon RX 6000 to 9000) or `nvidia` (the CUDA image).
 - `listen`: `lan`, `vpn` or both. `lan` takes the home network from the machine's fixed address.
+- `top_k`: Studio's Top-K fixed for every request, for example 20. Without it Studio lets a
+  model it has no preset for choose among all its words, which is slower. 0 fixes nothing.
 - Studio's login is `unsloth` with a password from the seed (`kiwi-server logins`). Its own tools
   (web search, running code) are off; `tools: true` lets each chat switch them on. Never a
   Cloudflare tunnel, and no JupyterLab.

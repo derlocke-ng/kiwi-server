@@ -62,6 +62,10 @@ services:
       - TZ={{ timezone }}
       - UNSLOTH_STUDIO_PORT=8000
       - UNSLOTH_STUDIO_PASSWORD={{ studio_password }}
+{% if top_k %}
+      # the same Top-K for every request: without one a model Studio has no preset for is a third slower
+      - UNSLOTH_SAMPLING_TOP_K={{ top_k }}
+{% endif %}
     devices:
 {% if gpu == 'amd' %}
       - /dev/kfd

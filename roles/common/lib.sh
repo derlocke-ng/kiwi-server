@@ -725,6 +725,16 @@ ks_stack_drop_files() { # DIR
     done
 }
 
+# The log of this script, for root only; and never a trace into it. What follows goes into the
+# log, and the script carries the stack's files (keys, passwords) in its variables: under
+# `bash -x` every one of them would be written there (27 Nov 2026: a timing trace on papaya put
+# 35,000 lines into a log every user of the machine could read).
+ks_log_open() {
+    case $- in *x*) set +x; echo "kiwi-server: no trace of this script (it carries the stack's secrets): switched off" >&2 ;; esac
+    touch "$KS_LOG" 2>/dev/null || true
+    chmod 0600 "$KS_LOG" 2>/dev/null || true
+}
+
 # ---- what an apply changed, so a running stack restarts only that (problem 55) ------------
 KS_QUADLET_DIR=${KS_QUADLET_DIR:-/etc/containers/systemd}
 declare -gA KS_BEFORE=() KS_BEFORE_NAMELESS=() KS_BEFORE_NAMES=()
@@ -1438,6 +1448,7 @@ ks_stack_standalone() { # DIR   — `kiwi-stack apply DIR`: a bundle without a r
     . "$KS_BUNDLE_DIR/stack.sh"
     KS_OS=$(ks_detect_os)
     install -d -m 0700 "$KS_STATE_DIR"
+    ks_log_open
     exec > >(tee -a "$KS_LOG") 2>&1
     ks_say "kiwi-stack $KS_VERSION — stack ${KS_STACK_MODULES[*]} on $KS_HOSTNAME from $KS_BUNDLE_DIR ($KS_OS)"
     trap 'ks_fail $? $LINENO "$BASH_COMMAND"' ERR
@@ -1494,6 +1505,7 @@ ks_main() {
     [[ $EUID -eq 0 ]] || ks_die "this script must run as root (sudo bash $0)"
     KS_OS=$(ks_detect_os)
     install -d -m 0700 "$KS_STATE_DIR" "$KS_STATE_DIR/backups"   # backups/: kiwi-server backup
+    ks_log_open
     exec > >(tee -a "$KS_LOG") 2>&1
     ks_say "kiwi-server $KS_VERSION — role $KS_ROLE on $KS_HOSTNAME ($KS_OS, target $KS_TARGET)"
     if [[ -f $KS_MARKER && ${1:-} != --force ]]; then

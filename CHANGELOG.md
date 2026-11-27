@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.313.0 — two minutes less per apply where the accounts are; the role's log is root's alone
+
+- **An apply of the machine with the accounts took two minutes too long** (kiwi-modules 0.126.2).
+  The accounts' setup, run with every apply, waited for Kanidm with a command Kanidm 1.12 no
+  longer has, so the wait never ended early. On quince a full apply that changed nothing went
+  from 177 to 43 seconds.
+- **The role's log is root's alone, and never a trace into it** (kiwi-stack 0.9.36).
+  `/var/log/kiwi-server-role.log` was readable by every user of the machine; it is 0600 now. A
+  role script run under `bash -x` switches the trace off: the script carries the host's secrets,
+  and a trace would write them into that log. That happened on 27 Nov 2026 on a test machine,
+  during a timing trace; the log was cleaned the same hour.
+- **Talk forgets a name the Nextcloud no longer has** (kiwi-modules 0.126.1): after a change of
+  the Nextcloud's name, or data taken over from another installation, the old signalling, STUN
+  and TURN servers are taken out after every start.
+- A setting or module this release does not know now says that an update is the likely cure,
+  with the release's number: such a fleet was usually saved by a newer kiwi-server.
+
 ## 2.312.0 — a new site no longer restarts the machine's containers
 
 - **A new name restarts nothing** (kiwi-stack 0.9.35). A new site gave every container of the

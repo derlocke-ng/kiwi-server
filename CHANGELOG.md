@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.316.0 — a careful apply
+
+- **`kiwi-server apply … --careful`**: one machine after the other, the least important first
+  (leaves, then names and rings, then the masters; of a pair with a moving address the one that
+  waits before the one that holds it). After each machine its sites are asked on the machine
+  until they answer; the first machine that fails, or whose sites do not answer, stops the
+  apply and the rest is not touched. A machine that does not answer at all is left out. For a
+  change nobody tried yet: `kiwi-server apply fleet.yaml --changed --careful`.
+  (docs/machines.md, "Running machines")
+
 ## 2.315.0 — a setting restarts only what is its own
 
 - **A part's script on the machine runs again when its own files changed** (kiwi-stack 0.9.38),

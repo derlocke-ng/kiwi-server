@@ -219,6 +219,21 @@ first, one after the other; then the machines that answer for names or open disk
 (`dns`, `tang`), together; then all the others together; the control node last when it
 applies itself. `--at-once N` (or `KIWI_AT_ONCE`) limits how many run together. Each line of a machine's output starts with its name.
 
+**A careful apply.** `--careful` is for a change that nobody tried yet, such as a new release
+or a setting that reaches many machines:
+
+```bash
+kiwi-server apply fleet.yaml --changed --careful
+```
+
+It applies one machine after the other, the least important first: the machines nothing else
+depends on, then the ones that answer for names or open disks, then the masters, and the
+control node last when it runs the apply itself. Of two machines that share a moving address,
+the one that waits goes before the one that holds it. After each machine its own sites are
+asked on the machine until they answer, for up to two minutes. The first machine that fails, or
+whose sites do not answer, stops the apply, and the message names the machines that were not
+touched. A machine that does not answer at all is left out and named at the end.
+
 The app's **Apply** offers them along; the page has **Save & apply** in the
 settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same
 two actions on the host page.

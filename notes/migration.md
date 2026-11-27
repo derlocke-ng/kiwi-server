@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | planned below (27 Nov); not built, not rehearsed |
+| Taking over v1's data | Nextcloud rehearsed on a VM with a stand-in (27 Nov); Vaultwarden and game saves not yet |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -47,7 +47,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 - v2's cloud module runs the same AIO images and volume names without the mastercontainer, and
   the games module knows all five games. Whether each takes v1's data as it is: to be rehearsed.
 
-## Taking over v1's data (plan, 27 Nov; not rehearsed yet)
+## Taking over v1's data (plan, 27 Nov; Nextcloud rehearsed that day)
 
 Looked at on sh3 on 27 Nov, read only: names, paths and versions, no content and no secret.
 
@@ -82,6 +82,44 @@ container. What has to match:
 
 Check after: sign in as the admin and as a user, a file opens, a file uploads, Talk and Collabora
 open, `occ status` and `occ db:add-missing-indices` say nothing is wrong.
+
+*Rehearsed on 27 Nov 2026* on mulberry, a throwaway uCore VM of the test fleet, with a stand-in
+for v1 (tests/drills/v1-standin.sh: AIO's containers under Docker, the same parts on, Nextcloud
+35.0.3, its own secrets, a user with files). What was done, in this order:
+
+1. v1's containers stopped and removed; the volumes and the data folder stay.
+2. The cold copy: each of the six volumes as one archive, as root:
+   `tar --numeric-owner --xattrs --acls -cpf COLD/<volume>.tar -C /var/lib/docker/volumes/<volume>/_data .`
+3. On the new system: `podman volume create <volume>` and `podman volume import <volume>
+   COLD/<volume>.tar` for each. Owners and modes arrive as they were; Podman labels the files.
+4. The machine in the fleet file with the `cloud` module and v1's settings (`nextcloud_datadir`,
+   `talk`, `fulltextsearch`, `whiteboard`), not applied yet.
+5. v1's eleven secrets into the store, each piped, none shown:
+   `… | kiwi-server secrets set FLEET MACHINE cloud.<setting>` for `admin_password`
+   (NEXTCLOUD_PASSWORD), `database_password`, `redis_password`, `turn_secret`,
+   `signaling_secret`, `talk_internal_secret`, `recording_secret`, `onlyoffice_secret`,
+   `imaginary_secret`, `fulltextsearch_password`, `whiteboard_secret`. On the real v1 they are
+   in the master container's `/mnt/docker-aio-config/data/configuration.json` under `secrets`.
+6. `kiwi-server apply`. All eleven containers were healthy within a minute, on the first try.
+7. Talk keeps v1's name in three lists beside the new one, and v1's comes first:
+   `occ talk:signaling:delete https://<old name>/standalone-signaling/`,
+   `occ talk:stun:delete <old name>:3478`, `occ talk:turn:delete turn <old name>:3478 udp,tcp`.
+   After that no setting names v1 any more.
+
+Checked after: the same installation id, 35.0.3 with no upgrade pending, both users there; the
+user signs in with her v1 password, her note reads, the 3 MB file has the same checksum, a wrong
+password gets 401, a new upload works; the admin signs in with v1's password; Collabora, Talk's
+signalling and Whiteboard answer under the new name; `occ setupchecks` shows nothing red and no
+index is missing; after a restart of the machine everything is healthy again in about a minute;
+a second `plan` changes nothing.
+
+Not in the rehearsal: the secrets read from a real master container's file; a data folder of
+270 GB (it stays on its disk, but its first start under v2 gives every file the containers'
+label, which takes time); v1 on another AIO release than v2 pulls that day; phones and desktop
+apps pointed at the new name.
+
+For the real move the owner's part is step 2 on sh3 (root, or `docker run` with the volume),
+before anything is wiped. `kiwi-server secrets set` is in pull request 409, not merged.
 
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. Each save folder goes into the `games` module's folder for that game; checked by

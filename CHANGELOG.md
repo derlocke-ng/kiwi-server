@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.317.0 — the reverse proxy is asked before an apply writes anything
+
+- Before an apply writes a machine's stack, nginx tests the config it would get, in a throwaway
+  container on the machine (its image, its mounts, the new files from a copy, no network). If
+  nginx refuses it, the apply stops there with nginx's own words; the machine's files and
+  containers are the ones from before and its sites go on answering. Until now such a config
+  was found when nginx did not start again, with every site of the machine gone (a control
+  node, 15 Nov 2026). Not asked when nothing of the proxy changes, so an apply that leaves it
+  alone costs nothing; asked, it takes under half a second. (kiwi-stack 0.9.40, kiwi-modules
+  0.127.0; docs/machines.md, "Running machines")
+- **module.yaml `preflight`**: any module can have its service asked this way
+  (docs/modules.md).
+- `tests/drills/preflight.sh FLEET MACHINE` proves it with a broken nginx template: passed on a
+  plain proxy and on one with public names.
+
 ## 2.316.1 — no false alarm in an apply, `ssh` to a master by its name
 
 - An apply since 2.315.0 could print "error: the role stopped … in ks_unit_claims" for every

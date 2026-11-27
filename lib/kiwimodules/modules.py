@@ -83,6 +83,28 @@ def load_jails(owner, raw):
     return jails
 
 
+PREFLIGHT_KEYS = ("service", "run")
+
+
+def load_preflight(owner, raw):
+    """module.yaml `preflight:` — a list of {service, run} (both templated): before an apply writes
+    the stack, `run` is asked in a throwaway container made like `service`'s new one, and its no
+    stops the apply there (kiwi-stack's KS_STACK_CHECKS). An entry whose service or command renders
+    to nothing is left out."""
+    asks = []
+    for a in raw or []:
+        if not isinstance(a, dict):
+            raise KiwiError("%s: preflight: each entry is a mapping" % owner)
+        unknown = sorted(str(k) for k in set(a) - set(PREFLIGHT_KEYS))
+        if unknown:
+            raise KiwiError("%s: preflight: unknown key(s): %s (known: %s)" % (owner, ", ".join(unknown), ", ".join(PREFLIGHT_KEYS)))
+        for k in PREFLIGHT_KEYS:
+            if not a.get(k):
+                raise KiwiError("%s: preflight: %s is required" % (owner, k))
+        asks.append({k: str(a[k]) for k in PREFLIGHT_KEYS})
+    return asks
+
+
 _ENV = None
 # Compiled templates and expressions by their text: one machine's render compiles the same few
 # hundred again and again (a module's server blocks for every name, its settings for every host),
@@ -238,6 +260,7 @@ class Module:
         sites = [str(e["site"]) for e in [nx] + list(nx.get("servers") or []) if isinstance(e, dict) and e.get("site")]
         self.logins = load_logins("modules/%s" % self.name, meta.get("logins"), self.settings, sites, self.derived)
         self.host = meta.get("host_integration") or {}
+        self.preflight = load_preflight("modules/%s" % self.name, meta.get("preflight"))
         self.dns = meta.get("dns") or {}
         self.checks = []   # [{"when": <jinja expression>, "error": text}]
         for c in meta.get("validate") or []:
@@ -460,6 +483,7 @@ class Bundle:
         self.services = []     # container names, for the summary
         self.service_modules = {}   # container name -> the module it is of ("km-pihole" -> "dns")
         self.urls = []         # what the operator can open afterwards
+        self.preflight = []    # "container|command": asked on the machine before the stack is written
         self.compose = None
         self.vpn_dependents = []   # containers inside the VPN client's network namespace
         self.mesh_via = ""         # the container the host routes the mesh through
@@ -1222,6 +1246,14 @@ class Renderer:
             for km in mod.host.get("kernel_modules") or []:
                 if km not in bundle.kernel_modules:
                     bundle.kernel_modules.append(str(km))
+            for ask in mod.preflight:
+                where = "modules/%s/module.yaml preflight" % name
+                svc, run = self.expand(ask["service"], ctx, where).strip(), self.expand(ask["run"], ctx, where).strip()
+                if not svc or not run:
+                    continue
+                if not re.match(r"^[A-Za-z0-9_.-]+$", svc) or "\n" in run:
+                    raise KiwiError("%s: %r: a container's name, and a command of one line" % (where, svc))
+                bundle.preflight.append("%s|%s" % (svc, run))
             for url in mod.meta.get("urls") or []:
                 url = self.expand(url, ctx, "modules/%s/module.yaml urls" % name)
                 if url.strip():         # a page that is switched off has none

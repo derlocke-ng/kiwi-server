@@ -238,6 +238,13 @@ The app's **Apply** offers them along; the page has **Save & apply** in the
 settings and **Apply all** on Home under "Changes not applied yet". The GUI has the same
 two actions on the host page.
 
+**The reverse proxy is asked first.** Before an apply writes anything of a machine's stack,
+nginx tests the config it would get, in a throwaway container on the machine. If nginx refuses
+it, the apply stops there with nginx's own words: "kn-nginx would not start with its new
+settings". The machine's files and containers are the ones from before, and its sites go on
+answering. Without this an nginx that refuses its config does not start again, and every site
+of the machine is gone until the next good apply.
+
 **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the step
 and the command, and `kiwi-server status` shows it. The marker that means
 "applied" is only written once every container of the stack runs.

@@ -1004,6 +1004,82 @@ ks_stack_changed_services() {   # the containers whose quadlet, or a file they m
     return 0
 }
 
+# ---- a part's word on its new settings, before anything of the stack is written -----------
+# KS_STACK_CHECKS: "SERVICE|COMMAND" (a module's `preflight`). COMMAND runs with `sh -c` in a
+# throwaway container made like SERVICE's new one: its image, its mounts, its names. It has no
+# network, and nothing it writes is kept. The files this apply brings are mounted from a copy,
+# the rest from the machine as it is. A command that says no stops the apply before a file of
+# the stack is written: every service goes on as it runs. (An nginx that refuses its config
+# does not start again, and every site of the machine is gone: 15 Nov 2026, a control node.)
+ks_fetch() { # KEY DEST   — the generator's file as a plain copy: nothing replaced, nothing counted
+    if [[ -n ${KS_FILES[$1]:-} ]]; then
+        printf '%s' "${KS_FILES[$1]}" | base64 -d > "$2"
+    else
+        cp -- "$(ks_bundle_path "$1")" "$2"
+    fi
+}
+ks_preflight_one() { # SERVICE COMMAND   — 0: it takes them, or was not asked; 1: it says no (KS_PREFLIGHT_SAID)
+    local svc=$1 cmd=$2 dd=$KS_STACK_DIR qdir=${KS_QUADLET_DIR:-/etc/containers/systemd}
+    local tmp q image line src dst rel d args=() same=1 out rc=0
+    KS_PREFLIGHT_SAID=''
+    ks_has_file "quadlet/$svc.container" || return 0
+    tmp=$(mktemp -d "${KS_PREFLIGHT_DIR:-/run}/kiwi-preflight.XXXXXX")
+    q=$tmp/quadlet
+    ks_fetch "quadlet/$svc.container" "$q"
+    image=$(sed -n 's/^Image=//p' "$q" | head -n 1)
+    # its image is not here yet (a first apply, a new image): nothing runs that a refused file could stop
+    if [[ -z $image ]] || ! podman image exists "$image" 2>/dev/null; then rm -rf "$tmp"; return 0; fi
+    cmp -s "$q" "$qdir/$svc.container" || same=0
+    while IFS= read -r line; do
+        src=${line%%:*}; dst=${line#*:}; dst=${dst%%:*}
+        [[ $src == /* && $dst == /* ]] || continue      # a named volume is the service's data: not asked
+        rel=${src#"$dd"/}
+        if [[ $src == "$dd"/* ]] && ks_has_file "stack/$rel"; then
+            mkdir -p "$tmp/new/$(dirname "$rel")"
+            ks_fetch "stack/$rel" "$tmp/new/$rel"
+            cmp -s "$tmp/new/$rel" "$src" || same=0
+            args+=(-v "$tmp/new/$rel:$dst:ro")
+        elif [[ -d $src ]]; then
+            args+=(-v "$src:$dst:O")                    # read from the machine, written nowhere
+        elif [[ -e $src ]]; then
+            args+=(-v "$src:$dst:ro")
+        else
+            for d in "${KS_STACK_DIRS[@]}"; do          # a folder this apply makes: empty for now
+                [[ $d == "$rel" || $d == "$src" ]] || continue
+                mkdir -p "$tmp/empty/$rel"; args+=(-v "$tmp/empty/$rel:$dst:O"); break
+            done
+        fi
+    done < <(sed -n 's/^Volume=//p' "$q")
+    while IFS= read -r line; do args+=(--add-host "$line"); done < <(sed -n 's/^AddHost=//p' "$q")
+    # nothing of it changes with this apply: it runs with exactly this already
+    if (( same )); then rm -rf "$tmp"; return 0; fi
+    out=$(timeout "${KS_PREFLIGHT_TIMEOUT:-90}" podman run --rm --network none --sysctl net.ipv4.ip_nonlocal_bind=1 \
+            --security-opt label=disable -e KIWI_CHECK=1 "${args[@]}" --entrypoint sh "$image" -c "$cmd" 2>&1) || rc=$?
+    rm -rf "$tmp"
+    case $rc in
+        0) return 0 ;;
+        124|125|126|127)    # the question itself failed (time, podman, no sh in the image): not the part's no
+            ks_warn "$svc could not be asked about its new settings (exit $rc): $(tail -n 1 <<<"$out")"
+            return 0 ;;
+    esac
+    KS_PREFLIGHT_SAID=$(tail -n 6 <<<"$out")
+    return 1
+}
+ks_stack_preflight() {
+    [[ ${KS_STACK_RUNTIME:-} == podman && -n ${KS_STACK_CHECKS[*]:-} && -z ${KS_NO_PREFLIGHT:-} ]] || return 0
+    local entry svc
+    rm -rf "${KS_PREFLIGHT_DIR:-/run}"/kiwi-preflight.* 2>/dev/null || true      # of a run that was cut off
+    for entry in "${KS_STACK_CHECKS[@]}"; do
+        svc=${entry%%|*}
+        [[ $entry == *"|"* && $svc =~ ^[A-Za-z0-9_.-]+$ ]] || continue
+        if ! ks_preflight_one "$svc" "${entry#*|}"; then
+            printf '%s\n' "$KS_PREFLIGHT_SAID" >&2
+            ks_die "$svc would not start with its new settings (its own words above). The stack was not touched:" \
+                   "every service runs as before. Correct the setting and apply again"
+        fi
+    done
+}
+
 ks_stack_unpack() {
     # Everything the generator rendered (compose file, module configs, gw.sh)
     # is root's: root runs the stack and the host units execute some of these
@@ -1040,6 +1116,7 @@ ks_stack_unpack() {
     fi
     # after the block above: until then a move from docker still has its stack running there
     [[ $KS_STACK_RUNTIME != podman ]] || ks_retire_docker
+    ks_stack_preflight
     ks_stack_remember
     if [[ $KS_STACK_RUNTIME == podman && -n $old_services ]]; then
         # a container whose module left the stack: its quadlet goes below, the running

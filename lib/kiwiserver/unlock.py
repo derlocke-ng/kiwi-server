@@ -9,6 +9,7 @@ have to trust whatever answered at that address. Design: docs/design/control-pla
 Unlock.
 """
 import atexit
+import hashlib
 import ipaddress
 import json
 import os
@@ -174,6 +175,16 @@ dropbearkey -y -f $d/dropbear_ed25519_host_key | grep '^ssh-ed25519' | cut -d' '
 PREPARE_DRACUT_SSHD = r'''
 set -eu
 keys=$(cat)
+# Set up with exactly this before (MARK: this script and the keys, as one fingerprint), and the boot
+# system is still made with it: nothing to do. The steps below ask rpm-ostree four times, five
+# seconds of every apply.
+mf=/etc/kiwi-server/unlock-boot.mark
+if [ -n "${MARK:-}" ] && [ "$(cat $mf 2>/dev/null)" = "$MARK" ] && [ -f /etc/ssh/dracut_ssh_host_ed25519_key.pub ] \
+        && [ "$(cat /etc/dracut-sshd/authorized_keys 2>/dev/null)" = "$keys" ] \
+        && rpm-ostree initramfs 2>/dev/null | grep -q 'Initramfs regeneration: enabled'; then
+    cut -d' ' -f1,2 /etc/ssh/dracut_ssh_host_ed25519_key.pub
+    exit 0
+fi
 RING_TIMEOUT_FILES_HERE
 d=/etc/dracut-sshd
 mkdir -p $d; chmod 0700 $d
@@ -243,6 +254,7 @@ fi
 rpm-ostree initramfs | grep -q 'Initramfs regeneration: enabled' ||
     ostree initramfs --enable --arg=--include --arg=$d/kiwi-shadow --arg=/etc/kiwi-shadow \
         --arg=--include --arg=$d/kiwi-sshd.conf --arg=/etc/systemd/system/sshd.service.d/kiwi.conf $more
+if [ -n "${MARK:-}" ]; then mkdir -p /etc/kiwi-server; printf %s "$MARK" > $mf; fi
 cut -d' ' -f1,2 $k.pub
 '''
 
@@ -885,7 +897,10 @@ def _initramfs_ssh(host, tgt, servers=None):
     """SSH in the initramfs, and its host key on record while the machine can vouch for it:
     the boot partition is not encrypted, so that key is the only proof of who answers."""
     script = (PREPARE_DROPBEAR % (dropbear_conf(host), LOOPBACK_PATH, LOOPBACK_HOOK)) if debian_like(host) else PREPARE_DRACUT_SSHD
-    out = remote.run(tgt, script, ("\n".join(authorized_lines(host, servers)) + "\n").encode())
+    keys = ("\n".join(authorized_lines(host, servers)) + "\n").encode()
+    if not debian_like(host):       # CoreOS: the script leaves early when it set the machine up with exactly this before
+        script = "MARK=%s\n" % hashlib.sha256(script.encode() + b"\0" + keys).hexdigest()[:32] + script
+    out = remote.run(tgt, script, keys)
     key = out.decode(errors="replace").strip()
     if not key.startswith("ssh-ed25519 "):
         raise KiwiError("%s: the initramfs has no SSH host key" % host.name)

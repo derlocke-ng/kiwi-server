@@ -5309,6 +5309,36 @@ class TestNoLockout(Base):
         self.assertNotEqual(r.returncode, 0)                                    # another error is not waited out
         self.assertIn("no such package", r.stderr)
 
+    def test_the_boot_systems_ssh_is_not_set_up_again_when_nothing_of_it_changed(self):
+        """CoreOS: the set-up asks rpm-ostree four times, five seconds of every apply. Set up with the
+        same script and keys before (a fingerprint the machine keeps), and the boot system still
+        made with it: it leaves at once with the host key. Anything else: the whole set-up."""
+        etc = os.path.join(self.tmp, "etc")
+        d = os.path.join(self.tmp, "bin2")
+        for sub in ("kiwi-server", "ssh", "dracut-sshd", "kiwi-curl"):
+            os.makedirs(os.path.join(etc, sub))
+        os.makedirs(d)
+        state = os.path.join(self.tmp, "regen")
+        write(state, "enabled")
+        write(os.path.join(d, "rpm-ostree"), "#!/bin/sh\necho \"Initramfs regeneration: $(cat %s)\"\n" % state)
+        os.chmod(os.path.join(d, "rpm-ostree"), 0o755)
+        write(os.path.join(etc, "ssh", "dracut_ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAHOSTKEY root@m\n")
+        write(os.path.join(etc, "dracut-sshd", "authorized_keys"), "the keys\n")
+        write(os.path.join(etc, "kiwi-server", "unlock-boot.mark"), "mark-one")
+        body = unlock.PREPARE_DRACUT_SSHD
+        head = body[:body.index("d=/etc/dracut-sshd")].replace("/etc/", etc + "/") + "echo the whole set-up\n"
+
+        def run(mark, keys="the keys\n"):
+            r = subprocess.run(["sh", "-c", "MARK=%s\n" % mark + head], input=keys, capture_output=True, text=True,
+                               env=dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout.strip().splitlines()[-1]
+        self.assertEqual(run("mark-one"), "ssh-ed25519 AAAAHOSTKEY")            # as before: left at once
+        self.assertEqual(run("mark-two"), "the whole set-up")                   # the script or the keys changed
+        self.assertEqual(run("mark-one", "other keys\n"), "the whole set-up")   # the keys on the machine are not these
+        write(state, "disabled")
+        self.assertEqual(run("mark-one"), "the whole set-up")                   # the boot system is no longer made with it
+
     def test_a_ring_that_does_not_answer_is_given_seconds_at_boot(self):
         """Seen in a power cut: a ring machine that is still starting swallows the request,
         and the unlock, whose request had no time limit, stood still for minutes."""

@@ -727,8 +727,16 @@ ks_stack_drop_files() { # DIR
 
 # ---- what an apply changed, so a running stack restarts only that (problem 55) ------------
 KS_QUADLET_DIR=${KS_QUADLET_DIR:-/etc/containers/systemd}
-declare -gA KS_BEFORE=()
+declare -gA KS_BEFORE=() KS_BEFORE_NAMELESS=() KS_BEFORE_NAMES=()
 KS_CHANGED=()
+KS_NAMES_ONLY=()        # quadlets that changed in nothing but the names they give their container
+KS_NAMES_FAILED=()
+
+# A quadlet without the names it gives its container (its AddHost lines). A new site on the machine
+# changes these lines in every container's quadlet and nothing else: no reason to restart them all
+# (27 Nov 2026: adding a vault to a machine restarted the eleven containers of its Nextcloud).
+ks_nameless() { grep -v '^AddHost=' -- "$1" | sha256sum; }
+ks_names_of() { sed -n 's/^AddHost=\(.*\):[^:]*$/\1/p' -- "$1" | tr '\n' ' '; }
 
 ks_stack_remember() {   # the files and quadlets as they are before the apply writes them
     local entry rel q
@@ -737,8 +745,14 @@ ks_stack_remember() {   # the files and quadlets as they are before the apply wr
         rel=${entry%:*}
         [[ -f $KS_STACK_DIR/$rel ]] && KS_BEFORE[$KS_STACK_DIR/$rel]=$(sha256sum < "$KS_STACK_DIR/$rel")
     done
+    KS_BEFORE_NAMELESS=(); KS_BEFORE_NAMES=()
     for q in "${KS_STACK_QUADLETS[@]}"; do
-        [[ -f $KS_QUADLET_DIR/$q ]] && KS_BEFORE[$KS_QUADLET_DIR/$q]=$(sha256sum < "$KS_QUADLET_DIR/$q")
+        [[ -f $KS_QUADLET_DIR/$q ]] || continue
+        KS_BEFORE[$KS_QUADLET_DIR/$q]=$(sha256sum < "$KS_QUADLET_DIR/$q")
+        if [[ $q == *.container ]]; then
+            KS_BEFORE_NAMELESS[$KS_QUADLET_DIR/$q]=$(ks_nameless "$KS_QUADLET_DIR/$q")
+            KS_BEFORE_NAMES[$KS_QUADLET_DIR/$q]=$(ks_names_of "$KS_QUADLET_DIR/$q")
+        fi
     done
     return 0
 }
@@ -750,10 +764,45 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
         p=$KS_STACK_DIR/${entry%:*}
         [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
     done
+    KS_NAMES_ONLY=()
     for q in "${KS_STACK_QUADLETS[@]}"; do
         p=$KS_QUADLET_DIR/$q
-        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
+        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] && continue
+        if [[ -f $p && -n ${KS_BEFORE_NAMELESS[$p]:-} && ${KS_BEFORE_NAMELESS[$p]} == "$(ks_nameless "$p")" ]]; then
+            KS_NAMES_ONLY+=("$p")       # the same container with other names: they reach it while it runs
+        else
+            KS_CHANGED+=("$p")
+        fi
     done
+    return 0
+}
+
+ks_stack_names_live() {     # QUADLET: its running container takes the names the quadlet has now. 1: it could not
+    local q=$1 svc hp tmp rc
+    svc=$(basename "$q" .container)
+    systemctl is-active -q "$svc.service" 2>/dev/null || return 0      # not running: its start brings them
+    hp=$(podman inspect -f '{{.HostsPath}}' "$svc" 2>/dev/null) || return 1
+    [[ -n $hp && -f $hp ]] || return 1
+    tmp=$(mktemp) || return 1
+    # Podman mounts this file into the container as /etc/hosts: written in place (the same inode),
+    # it is there at once. The names it had and has go out, the ones it has now come in.
+    { awk -v drop="${KS_BEFORE_NAMES[$q]:-} $(ks_names_of "$q")" '
+          BEGIN { n = split(drop, a, " "); for (i = 1; i <= n; i++) d[a[i]] = 1 }
+          { for (i = 2; i <= NF; i++) if ($i in d) next; print }' "$hp"
+      sed -n 's/^AddHost=\(.*\):\([^:]*\)$/\2\t\1/p' -- "$q"
+    } > "$tmp" && cat "$tmp" > "$hp"
+    rc=$?; rm -f "$tmp"; return $rc
+}
+
+KS_PENDING_NAMES=${KS_PENDING_NAMES:-/etc/kiwi-server/names-pending}
+ks_stack_names_now() {      # the names reach the running containers; KS_NAMES_FAILED: the ones that need a restart after all
+    local q n=0
+    KS_NAMES_FAILED=()
+    for q in "${KS_NAMES_ONLY[@]}"; do
+        if ks_stack_names_live "$q"; then n=$((n + 1)); else KS_NAMES_FAILED+=("$(basename "$q" .container)"); fi
+    done
+    (( n )) && ks_say "$n container(s) took the machine's new names without a restart"
+    rm -f "$KS_PENDING_NAMES"
     return 0
 }
 
@@ -762,9 +811,15 @@ ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or diffe
 # then saw nothing to restart and left the old container serving the old settings.
 KS_PENDING=${KS_PENDING:-/etc/kiwi-server/restart-pending}
 ks_stack_note_pending() {
-    local svc all=()
-    mapfile -t all < <(ks_stack_restart_due)
+    local svc q all=()
     install -d -m 0755 "$(dirname "$KS_PENDING")"
+    # names an earlier run wrote into the quadlets and did not get to hand to the running
+    # containers (it ended before): those containers restart now, the sure way
+    if [[ -f $KS_PENDING_NAMES ]]; then cat -- "$KS_PENDING_NAMES" >> "$KS_PENDING"; rm -f "$KS_PENDING_NAMES"; fi
+    if (( ${#KS_NAMES_ONLY[@]} )); then
+        for q in "${KS_NAMES_ONLY[@]}"; do basename "$q" .container; done > "$KS_PENDING_NAMES"
+    fi
+    mapfile -t all < <(ks_stack_restart_due)
     if (( ${#all[@]} )); then
         printf '%s\n' "${all[@]}" > "$KS_PENDING.tmp" && ks_replace "$KS_PENDING.tmp" "$KS_PENDING"
     fi
@@ -1300,6 +1355,7 @@ ks_stack_apply() {
         # lives in another's network follows it by BindsTo.
         local changed=() svc
         mapfile -t changed < <(ks_stack_restart_due)
+        ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
         ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         local failed=0
@@ -1314,7 +1370,7 @@ ks_stack_apply() {
     else
         # the first apply, a stopped stack or a recreated network: everything from the start
         systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
-        rm -f "$KS_PENDING"
+        rm -f "$KS_PENDING" "$KS_PENDING_NAMES"
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"
@@ -1350,6 +1406,7 @@ ks_stack_parts() {
     if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service; then
         local changed=() svc failed=0
         mapfile -t changed < <(ks_stack_restart_due)
+        ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
         ks_say "restarting what changed (${changed[*]:-nothing}), starting what is new"
         /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         for svc in "${changed[@]}"; do
@@ -1362,7 +1419,7 @@ ks_stack_parts() {
         (( failed )) || rm -f "$KS_PENDING"
     else
         systemctl restart kiwi-stack.service || ks_die "kiwi-stack.service did not start — journalctl -u kiwi-stack"
-        rm -f "$KS_PENDING"
+        rm -f "$KS_PENDING" "$KS_PENDING_NAMES"
     fi
     ks_say "checking that every container is running"
     /usr/local/bin/kiwi-stack verify || ks_die "the stack is not up — the containers above are not running (kiwi-stack logs <name>)"

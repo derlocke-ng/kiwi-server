@@ -61,6 +61,25 @@ L: days. New ideas go to the end of their section.
     `kiwi-server ai bench` to compare models; `ai connect` for opencode. Waits for the owner's
     settings (GPU, models). L~~ Done (2.306.0-2.306.3): lemonaide, an RX 9070 XT, runs Studio.
 
+15. Faster and stronger (the owner, 27 Nov 2026: "make this tool suck less, make it faster and
+    stronger"; measured that day, in this order):
+    a. Cheap applies. An apply that changes nothing takes 20 s on lychee, under 2 s of it on the
+       machine: a disk-key check at every apply while a one-time key for a later install waits
+       (luks.swap, 7 s), and the steps after the role sent one by one. A new site restarts every
+       container of the machine (each carries the machine's names as AddHost lines): names
+       without a restart. Goal: 3 s, and a new site restarts the proxy only. M
+    b. A rollout by the control node: a change or a release goes out by itself, the proxy's
+       config checked first (nginx-check), one machine first, then the rest, stop and back on a
+       failure. Replaces `apply --changed` by hand and the release chain script. M-L
+    c. The fleet says which release it needs: an older kiwi-server says "update me first", not
+       "unknown setting" (a new key refused the whole fleet for an hour that day), and the
+       control node updates itself before it takes the fleet. S-M
+    d. Each part says how to tell it is ready (a page, a port, a command): one check for apply,
+       update (back on a failure: the runbook's update-failed), the runbook and the status page. M
+    e. Read commands in kubectl's way, from the agents' reports: get, describe, logs, explain. M
+    Kubernetes (k0s) as the base: still no (scale.md); as a module for one site with three or
+    more servers, or an export of the modules as Kubernetes YAML (Podman runs it): later.
+
 ## 2. Smaller, no decision needed
 
 - ~~`backups --offsite`: restore from the offsite copy without logging in to the store's machine.~~ Done (2.297.0): `backups STORE --from-offsite`; drilled (tests/drills/backup-offsite.sh, lychee's store, a stand-in on quince).
@@ -89,8 +108,11 @@ L: days. New ideas go to the end of their section.
   machine itself after a start; choosing and loading a model in the app and on the control page. M
 - The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
   rebased on 0.125.0): to try on lemonaide when it is free, then release. S
-- Taking over a v1 installation's data (notes/migration.md): the rehearsal on throwaway VMs with
-  stand-in data, Nextcloud AIO first. L
+- Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
+  with a stand-in, with and without server-side encryption (27 Nov). Open: Vaultwarden with an
+  account and an item, a game save; then mulberry goes (`kiwi-server remove`, its VM on sh3). M
+- cloud: after a change of its name Talk keeps the old name in three lists (signalling, STUN,
+  TURN), the old one first; the module should drop the entries that are not its name. S
 
 ## 3. Dropped on 22 November 2026
 

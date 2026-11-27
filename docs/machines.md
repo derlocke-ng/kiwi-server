@@ -179,6 +179,12 @@ files, a restart of the containers whose files changed, and the check that every
 runs. The machine's own steps (packages, users, firewall, its units, new images) are left out,
 and the apply says "only its stack changed". `KIWI_FULL_APPLY=1` runs the whole role anyway.
 
+**A new name restarts nothing.** A new site on a machine gives each of its containers one more
+name, so that they reach the site through the machine's reverse proxy. The containers take the
+name while they run. Only the reverse proxy restarts, because its configuration changed.
+`kiwi-server plan` says how many containers take new names (on Podman; with Docker a container
+whose names changed is still created anew).
+
 **One login per machine.** An apply makes some twenty calls to a machine after its role; they share
 one SSH connection, kept two minutes (a login is most of a call's second). A check whether a
 machine answers, its boot system and a test of a new key log in on their own.

@@ -2,8 +2,9 @@
 host units rendered here, compared by hash with the machine's, and the containers that would
 restart for it, by the rule kiwi-stack itself applies (roles/common/lib.sh,
 ks_stack_changed_services: a container restarts when its quadlet changed, or a file it mounts
-or reads), and the kiwi-stack tool and library. The rest of the role script (packages, sshd,
-sysctl) is not compared.
+or reads; one whose quadlet changed only in the names it gives the container, its AddHost lines,
+takes them while it runs), and the kiwi-stack tool and library. The rest of the role script
+(packages, sshd, sysctl) is not compared.
 """
 import hashlib
 import shlex
@@ -15,10 +16,16 @@ UNITS = "/etc/systemd/system"
 STACK_ENV = "/etc/kiwi-server/stack.env"
 CLI = "/usr/local/bin/kiwi-stack"
 LIB = "/usr/local/lib/kiwi-stack/lib.sh"
+NAMELESS = "without its names:"         # a key of `have`: a container quadlet's hash without its AddHost lines
 
 
 def _sha(content):
     return hashlib.sha256(content if isinstance(content, bytes) else content.encode()).hexdigest()
+
+
+def _nameless(text):
+    """A quadlet's hash without the names it gives its container (kiwi-stack: ks_nameless)."""
+    return _sha("".join(line + "\n" for line in text.splitlines() if not line.startswith("AddHost=")))
 
 
 def wanted(host, bundle):
@@ -39,6 +46,8 @@ def machine(tgt, paths):
     """(release that wrote the stack, {path: sha256}, [services]) as the machine has them."""
     script = ("head -n1 %s 2>/dev/null | sed 's/^/V /'\n" % STACK_ENV +
               "for p in %s; do [ -f \"$p\" ] && sha256sum \"$p\" | sed 's/^/H /'; done\n" % " ".join(shlex.quote(p) for p in paths) +
+              "for p in %s; do [ -f \"$p\" ] && echo \"N $(grep -v '^AddHost=' \"$p\" | sha256sum | cut -d' ' -f1)  $p\"; done\n"
+              % (" ".join(shlex.quote(p) for p in paths if p.endswith(".container")) or "''") +
               "sed -n 's/^STACK_SERVICES=\"\\(.*\\)\"$/S \\1/p' %s 2>/dev/null\n" % STACK_ENV)
     version, have, services = "", {}, []
     for line in remote.run(tgt, script).decode(errors="replace").splitlines():
@@ -48,6 +57,9 @@ def machine(tgt, paths):
         elif kind == "H":
             digest, _sp, path = rest.partition("  ")
             have[path] = digest
+        elif kind == "N":
+            digest, _sp, path = rest.partition("  ")
+            have[NAMELESS + path] = digest
         elif kind == "S":
             services = rest.split()
     return version, have, services
@@ -56,13 +68,16 @@ def machine(tgt, paths):
 def compare(bundle, want, have, services_before):
     changed = sorted(p for p in want if have.get(p) != want[p])
     quadlets = getattr(bundle, "quadlets", None) or {}
-    restart, new = [], []
+    restart, new, names = [], [], []
     for svc in bundle.services:
         q = "%s/%s.container" % (QUADLETS, svc)
         if q in want and q not in have:
             new.append(svc)
             continue
         hit = q in changed
+        named = hit and have.get(NAMELESS + q) == _nameless(quadlets.get(svc + ".container") or "")
+        if named:           # only its names changed: unless a file it mounts changed too, it goes on running
+            hit = False
         for line in (quadlets.get(svc + ".container") or "").splitlines():
             if hit:
                 break
@@ -75,6 +90,8 @@ def compare(bundle, want, have, services_before):
             hit = any(p == src or p.startswith(src.rstrip("/") + "/") for p in changed)
         if hit:
             restart.append(svc)
+        elif named:
+            names.append(svc)
     removed = [s for s in services_before if s not in bundle.services]
-    return {"changed": [{"path": p, "new": p not in have} for p in changed], "restart": restart,
+    return {"changed": [{"path": p, "new": p not in have} for p in changed], "restart": restart, "names": names,
             "new_services": new, "removed_services": removed, "quadlets": bool(quadlets)}

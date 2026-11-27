@@ -11,6 +11,7 @@ install, as a provider does, could otherwise still decrypt later snapshots.
 Keys reach the machine on stdin, into a directory on tmpfs, never on a command
 line. Design: docs/design/control-plane.md, Secrets.
 """
+import hashlib
 import os
 import secrets
 import sys
@@ -133,24 +134,51 @@ def wants_reencrypt(host):
     return host.role == "master" if setting is None else bool(setting)
 
 
+# the encrypted disks of a machine by their ids: a new install has new ones
+DISKS_SCRIPT = "blkid -c /dev/null -t TYPE=crypto_LUKS -o value -s UUID | sort | tr '\\n' ' '"
+
+
+def _disks(tgt):
+    try:
+        return remote.run(tgt, DISKS_SCRIPT).decode(errors="replace").split()
+    except (KiwiError, OSError):
+        return []
+
+
 def swap(host, tgt):
     """At first contact, before the role's secrets reach the machine: the
     one-time key out, a generated one in. The new key is on disk here before
     the machine changes, and the one-time key stays until it has, so a run
-    that is cut off can be repeated."""
+    that is cut off can be repeated.
+
+    A one-time key made for a later install waits while the machine runs on its old disk. That
+    disk is asked once whether the key opens it (three tries of a key, seconds each by design);
+    the answer is kept with the disks' ids (secrets/luks/<host>.seen), and an apply asks again
+    only when the machine has other disks (it was installed anew) or another one-time key."""
     if not uses_one_time_key(host):
         return
     once = _read(once_file(host))
     if not once:
         return
     next_path, key_path = _path(host.fleet, host.name, "next"), _path(host.fleet, host.name, "key")
+    seen_path, mark = _path(host.fleet, host.name, "seen"), hashlib.sha256(once.encode()).hexdigest()[:16]
+    disks = None
+    if _read(seen_path).startswith(mark + " "):
+        disks = _disks(tgt)
+        if disks and _read(seen_path) == "%s %s" % (mark, " ".join(disks)):
+            return                  # asked before: these disks are not the ones this key is for
     new = _read(next_path) or _make(next_path, KEY_LENGTH)
     out = remote.run(tgt, SWAP_SCRIPT, ("%s\n%s\n%s\n" % (once, new, _read(key_path))).encode())
     words = out.decode(errors="replace").split()
     state = words[0] if words else "none"
     if state == "current":          # a render made a key for a later install: this disk is not it
         os.remove(next_path)
+        disks = _disks(tgt) if disks is None else disks
+        if disks:
+            util.write_bytes(seen_path, ("%s %s" % (mark, " ".join(disks))).encode(), 0o600)
         return
+    if os.path.isfile(seen_path):
+        os.remove(seen_path)
     if state not in ("swapped", "already"):
         raise KiwiError("no disk on the machine opens with %s or the key on record — installed from an older ISO? "
                         "Build a new one, or remove that file if the key was changed by hand" % once_file(host))

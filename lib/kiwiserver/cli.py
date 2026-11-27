@@ -3848,9 +3848,9 @@ def cmd_apply(args):
                 sick = [b.rsplit(":", 1)[0] for b in bad if b.endswith(":unhealthy")]
                 sites = [b for b in bad if not b.endswith(":unhealthy")]
                 what = ([("of its sites these do not answer: %s" % ", ".join(sites))] if sites else []) \
-                    + ([("%s unhealthy" % util.count(len(sick), "part reports", "parts report") + ": " + ", ".join(sick))] if sick else [])
+                    + ([("%s unhealthy" % util.count(len(sick), "service reports", "services report") + ": " + ", ".join(sick))] if sick else [])
                 raise KiwiError("%s is applied, and %s. Stopped here. Not touched: %s" % (h.name, "; ".join(what), left))
-            util.say("%s: %s, no part reports unhealthy" % (h.name, "its %s" % util.count(len(names), "site answers", "sites answer")
+            util.say("%s: %s, no service reports unhealthy" % (h.name, "its %s" % util.count(len(names), "site answers", "sites answer")
                                                           if names else "it has no site to ask"))
         hosts_waves = []
     else:

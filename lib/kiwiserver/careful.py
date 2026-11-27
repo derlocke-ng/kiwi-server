@@ -10,8 +10,8 @@ that is not: a new release, a setting nobody tried yet.
   this last. Of two machines that share a moving address, the one that waits goes before the one
   that holds it, so the address has a machine with its services up at every moment.
 - After each machine its own sites are asked, from the machine itself, until they answer or two
-  minutes have passed; and its parts with a health check, until none reports unhealthy.
-- The first machine that fails, whose sites do not answer or that has an unhealthy part stops the
+  minutes have passed; and its services with a health check, until none reports unhealthy.
+- The first machine that fails, whose sites do not answer or that has an unhealthy service stops the
   apply: the machines after it are not touched, and it says which.
 - A machine that does not answer at all is left out and said at the end: nothing was changed there.
 """
@@ -32,7 +32,7 @@ for n in $NAMES; do
     code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 "https://$n/" 2>/dev/null)
     case ${code:-000} in 2??|3??|4??) ;; *) bad="$bad $n:${code:-000}" ;; esac
 done
-# and its parts that have a health check: one that says it is not well (one still starting is not)
+# and its services that have a health check: one that says it is not well (one still starting is not)
 for c in $(podman ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null); do bad="$bad $c:unhealthy"; done
 echo "bad$bad"
 '''
@@ -83,7 +83,7 @@ def order(fleet, roles, hosts, renderer, holds=holds, me=None):
 
 def answers(host, tgt, names, run=remote.run, wait=WAIT, sleep=time.sleep, clock=time.monotonic):
     """What is not well on the machine after its apply: its sites that do not answer ("name:502")
-    and its parts that report unhealthy ("kn-vault:unhealthy"); [] when nothing. Asked on the
+    and its services that report unhealthy ("kn-vault:unhealthy"); [] when nothing. Asked on the
     machine every few seconds until all is well or `wait` seconds have passed (a container that
     restarted takes a moment)."""
     script = "NAMES=%s\n%s" % (shlex.quote(" ".join(names)), VERIFY_SCRIPT)

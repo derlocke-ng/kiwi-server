@@ -84,7 +84,7 @@ L: days. New ideas go to the end of their section.
        module says that an update is the likely cure. Open: fleet-wide commands going on
        without the one machine whose setting is not known; the control node updating itself
        before it takes a newer fleet (today it warns after the push). S-M
-    d. Begun (2.318.0): a health check for 23 parts (on the owner's machines 88 of 107
+    d. Begun (2.318.0): a health check for 25 parts (on the owner's machines 88 of 107
        containers had none; podman drops the image's own), read by the status, the runbook and
        the careful apply; `verify` names an unhealthy one (kiwi-stack 0.9.41). Open: the other
        parts (portainer and CoreDNS have no shell; BTCPay's own services, the relay,
@@ -128,10 +128,20 @@ L: days. New ideas go to the end of their section.
 - The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
   rebased on 0.125.0): to try on lemonaide when it is free, then release. S
 - Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
-  with a stand-in, with and without server-side encryption (27 Nov). Open: Vaultwarden with an
-  account and an item, a game save; then mulberry goes (`kiwi-server remove`, its VM on sh3). M
+  with a stand-in, with and without server-side encryption (27 Nov); Vaultwarden with an
+  account and an item (27 Nov); the games on lemonaide (tests/drills/minecraft-takeover.sh,
+  enshrouded-takeover.sh, abiotic-takeover.sh, the night of 27 Nov). Open: Satisfactory (one
+  folder, nothing to sort); then mulberry goes (`kiwi-server remove`, its VM on sh3): the
+  owner's word. S
 - ~~cloud: after a change of its name Talk keeps the old name in three lists.~~ Done
   (kiwi-modules 0.126.1, in 2.313.0).
+- Games, found at the takeover rehearsals (27 Nov 2026): a public Minecraft server with `sleep` is
+  woken by the Internet's scanners again and again (medlar's `survival`: any knock on its port
+  counts; a wake only for a real join would need the first attempt to fail); Satisfactory's game
+  files lie inside its backed-up folder (the image keeps them in `/config/gamefiles`: a `files`
+  entry for that folder would keep them out of the backup, and moves an existing server's
+  files); Abiotic Factor's image sets the password `password` when none is given (said in
+  docs/roles.md; the catalog cannot say "none"). S each
 
 ## 3. Dropped on 22 November 2026
 

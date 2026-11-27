@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: games
   title: Game servers
-  version: 1.2.0
+  version: 1.3.0
   description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
   category: gaming
   node_types: [node]
@@ -95,6 +95,7 @@ settings:
       The games this module knows, YAML: game -> {title, image, ports, data, files, env, command}. Add your own here.
       ports: the ports it listens on, like 25565/tcp; the first is the one players type. data: folders it keeps its worlds in (name -> path in the container), backed up.
       files: folders for what it downloads (the game itself), not backed up. env: the image's settings; {name}, {password}, {memory} and {server} stand for the server's own. command: its command line.
+      health: a command in the image that ends with 0 while the server takes players (Minecraft: mc-health); the status then names a server that runs and does not.
       Run on a machine of the fleet and played: minecraft, zandronum. Started from this catalog and listening (kiwi-server's tests/drills/game-images.py, 16 Nov 2026): all the others. The Steam games download the game at their first start (gigabytes); a failed download ends the container and it starts again by itself.
     default:
       minecraft:
@@ -106,6 +107,7 @@ settings:
         # GENERIC_PACK: /modpacks/<its file>} unpacks it into the world's folder at the first start
         files: { modpacks: /modpacks }
         env: { EULA: "TRUE", UID: "1000", GID: "1000", MEMORY: "{memory}", MOTD: "{name}" }
+        health: mc-health
       minecraft-bedrock:
         title: Minecraft (Bedrock)
         image: docker.io/itzg/minecraft-bedrock-server:latest

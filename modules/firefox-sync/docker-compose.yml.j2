@@ -26,6 +26,13 @@ services:
       {{ network_name }}:
         ipv4_address: {{ container_ip }}
     restart: unless-stopped
+    # the sync server's own heartbeat (it asks its database too)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8000/__heartbeat__"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:

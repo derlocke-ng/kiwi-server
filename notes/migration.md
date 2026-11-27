@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft world and an Enshrouded world on lemonaide; Abiotic Factor and Satisfactory not yet |
+| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft, an Enshrouded and an Abiotic Factor world on lemonaide; Satisfactory not (one folder, nothing to sort) |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -139,15 +139,15 @@ with the folder; v2 starts with sign-ups off.
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. v1 keeps one folder per server under `~/docker/games`; the `games` module keeps the
 save apart from the game's files, under `<docker folder>/kn-games/<server>/`. Where each goes
-(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft and
-Enshrouded rehearsed that night, see below; Abiotic Factor and Satisfactory not):
+(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft,
+Enshrouded and Abiotic Factor rehearsed that night, see below; Satisfactory not):
 
 | Game | v1's folder | goes into `kn-games/<server>/` |
 |---|---|---|
 | Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame`; the rest of `game-enshrouded` | `savegame`; the rest into `kn-games-files/<server>/game` |
 | Minecraft, three worlds | `game-minecraft*/data`, `game-minecraft*/modpacks` | `data`; the pack into `kn-games-files/<server>/modpacks` |
-| Abiotic Factor | `game-abiotic/data` | `saves` (v1's `data` is the game's `Saved` folder: it holds `SaveGames`, `Config`, `Logs`; seen 27 Nov) |
-| Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder |
+| Abiotic Factor | `game-abiotic/data`; `game-abiotic/gamefiles` | `saves` (v1's `data` is the game's `Saved` folder: it holds `SaveGames`, `Config`, `Logs`); the game into `kn-games-files/<server>/game` |
+| Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder (it is the image's one folder `/config` in v1 and in the catalog: nothing to sort; not rehearsed) |
 
 The game's own files download again by themselves. Checked by starting the server and seeing
 the world's name.
@@ -165,6 +165,17 @@ the same and downloads 8 G first. v1's server also has roles with passwords of t
 (`SERVER_ROLE_0_NAME`, `SERVER_ROLE_0_PASSWORD` and so on, read as names only): they go into
 the server's `env:` as they are; their values are in v1's container, `docker inspect
 game-enshrouded` shows them to the owner.
+
+*Abiotic Factor, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/abiotic-takeover.sh, all
+passed), with the catalog's image (ghcr.io/pleut/abiotic-factor-linux-docker), whose two folders
+are v1's: stop the old server; move `game-abiotic/data` to `<docker folder>/kn-games/<server>/saves`
+and `game-abiotic/gamefiles` (3 G) to `<docker folder>/kn-games-files/<server>/game`; the server
+in the fleet file (`abiotic: {game: abiotic-factor, name: …, password: …}`) and apply. The world
+is under `saves/SaveGames/Server/Worlds/<name>`; the catalog's name is `Cascade`, another one goes
+into `env: {WorldSaveName: …}` (the folder's name on sh3 says which). The new server saved the
+old world again five minutes after its start, with the same content, and downloaded nothing.
+Two things about this game: it saves by itself every five minutes and does not end when asked
+to (a stop ends it after 90 seconds), and without a password its image sets `password`.
 
 *Minecraft, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/minecraft-takeover.sh, 14 of
 14). v1's three folders are servers of the image the catalog uses too (itzg/minecraft-server)

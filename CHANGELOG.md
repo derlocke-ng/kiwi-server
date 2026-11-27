@@ -5,8 +5,8 @@
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
   authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync
-  and BTCPay, Jabber, the hub, OpenCloud, the accounts (Kanidm) and the sign-up pages
-  (kiwi-modules 0.128.0 to 0.131.0). Podman does not take over the
+  and BTCPay, Jabber, the hub, OpenCloud, the accounts (Kanidm), the sign-up pages, Firefox
+  Sync and Minecraft servers (kiwi-modules 0.128.0 to 0.132.0). Podman does not take over the
   check an image brings: on the machines of one network 88 of 107 containers had none, and the
   status, the page and the runbook saw "running" and no more. Now a service that runs but does
   not do its job is named ("kn-vault reports unhealthy"). Nothing acts on it by itself. These
@@ -24,7 +24,8 @@
   Minecraft servers restart once with the apply that brings this.
   `tests/drills/enshrouded-takeover.sh` does the same for an Enshrouded server: its world moved
   to where the module keeps it, the game's 8 GB taken along; the new server finds the old
-  world and downloads nothing.
+  world and downloads nothing. `tests/drills/abiotic-takeover.sh` does it for Abiotic Factor.
+- **games**: a catalog game may name `health`; Minecraft's servers have their image's own check.
 - The public pages' own `/healthz` answered with an error 500 since the pages got a container
   of their own; nothing asked it until the health check did.
 - docs/modules.md says how to write a health check and who reads it.

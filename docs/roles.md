@@ -191,6 +191,10 @@ document it and are not tried.
   `args:` is the server's command line.
 - The big games need a machine for it: Enshrouded wants about 16 GB of memory,
   Abiotic Factor and Palworld about 8.
+- **Abiotic Factor always has a password.** Without `password:` its image
+  sets the word `password`; players type that. It also does not end when it
+  is asked to: a stop waits its 90 seconds and then ends it, and its world is
+  the one it last saved by itself (it saves every five minutes).
 - **A server that sleeps while nobody plays**: `sleep: 30` stops it after 30
   minutes (5 or more) in which no player sent it anything, and frees the memory.
   The first player who tries to join wakes it; they get in a minute or two later

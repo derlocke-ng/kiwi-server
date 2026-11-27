@@ -314,10 +314,14 @@ preflight:
 ```
 
 Both values are templates; an entry that renders to nothing is left out. The command sees
-`KIWI_CHECK=1`. It is not asked when the image is not on the machine yet (a first apply), or
+`KIWI_CHECK=1`. For an image without a shell write `run: "exec PROGRAM ARGS"`: the program
+runs directly, its words split at spaces. The last lines the command prints go into the
+apply's output and the machine's role log, so do not ask a program that prints a config with
+secrets in it. It is not asked when the image is not on the machine yet (a first apply), or
 when neither the service's files nor its unit change. A question that fails by itself (podman,
 a timeout of 90 seconds, no `sh` in the image) is a warning, not a stop. Podman only.
-The reverse proxy uses it; `tests/drills/preflight.sh` proves it with a broken template.
+The reverse proxy and the accounts use it; `tests/drills/preflight.sh` proves both with a
+broken template.
 
 ## Rendering
 

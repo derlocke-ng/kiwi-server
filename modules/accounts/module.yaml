@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: accounts
   title: Accounts (Kanidm)
-  version: 1.2.2
+  version: 1.3.0
   description: "One account for the network's services: Kanidm keeps the people, their passwords and passkeys, and lets Forgejo, Nextcloud and the others sign them in (OpenID Connect); Jabber can check its passwords too (LDAP). People get an account with an invite code or by asking, as the network's sign-up page says, and set their password with a link: no email. At id.<hostname>"
   category: security
   node_types: [master, node]
@@ -19,6 +19,12 @@ network:
 firewall:
   scope: vpn-client
   rules: []
+
+# asked on the machine before an apply writes anything: Kanidm's own test of its config. One that
+# does not start means no sign-in anywhere. Its image has no shell: the program itself
+preflight:
+  - service: "{{ container_prefix }}-accounts"
+    run: "exec /sbin/kanidmd configtest -c /config/server.toml"
 
 templates:
   compose: docker-compose.yml.j2

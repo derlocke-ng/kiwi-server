@@ -1005,7 +1005,8 @@ ks_stack_changed_services() {   # the containers whose quadlet, or a file they m
 }
 
 # ---- a part's word on its new settings, before anything of the stack is written -----------
-# KS_STACK_CHECKS: "SERVICE|COMMAND" (a module's `preflight`). COMMAND runs with `sh -c` in a
+# KS_STACK_CHECKS: "SERVICE|COMMAND" (a module's `preflight`). COMMAND runs with `sh -c` (as
+# "exec PROGRAM ARGS": the program itself, for an image without a shell) in a
 # throwaway container made like SERVICE's new one: its image, its mounts, its names. It has no
 # network, and nothing it writes is kept. The files this apply brings are mounted from a copy,
 # the rest from the machine as it is. A command that says no stops the apply before a file of
@@ -1053,8 +1054,15 @@ ks_preflight_one() { # SERVICE COMMAND   — 0: it takes them, or was not asked;
     while IFS= read -r line; do args+=(--add-host "$line"); done < <(sed -n 's/^AddHost=//p' "$q")
     # nothing of it changes with this apply: it runs with exactly this already
     if (( same )); then rm -rf "$tmp"; return 0; fi
-    out=$(timeout "${KS_PREFLIGHT_TIMEOUT:-90}" podman run --rm --network none --sysctl net.ipv4.ip_nonlocal_bind=1 \
-            --security-opt label=disable -e KIWI_CHECK=1 "${args[@]}" --entrypoint sh "$image" -c "$cmd" 2>&1) || rc=$?
+    if [[ $cmd == "exec "* ]]; then     # an image without a shell: the program itself, its words as they stand
+        local direct=()
+        read -r -a direct <<<"${cmd#exec }"
+        out=$(timeout "${KS_PREFLIGHT_TIMEOUT:-90}" podman run --rm --network none --sysctl net.ipv4.ip_nonlocal_bind=1 \
+                --security-opt label=disable -e KIWI_CHECK=1 "${args[@]}" --entrypoint "${direct[0]}" "$image" "${direct[@]:1}" 2>&1) || rc=$?
+    else
+        out=$(timeout "${KS_PREFLIGHT_TIMEOUT:-90}" podman run --rm --network none --sysctl net.ipv4.ip_nonlocal_bind=1 \
+                --security-opt label=disable -e KIWI_CHECK=1 "${args[@]}" --entrypoint sh "$image" -c "$cmd" 2>&1) || rc=$?
+    fi
     rm -rf "$tmp"
     case $rc in
         0) return 0 ;;

@@ -113,6 +113,13 @@ signalling and Whiteboard answer under the new name; `occ setupchecks` shows not
 index is missing; after a restart of the machine everything is healthy again in about a minute;
 a second `plan` changes nothing.
 
+A second pass the same day with server-side encryption switched on in the stand-in, as v1 has
+it (default module, master key): a file v1 had encrypted reads under v2 with the same checksum,
+a file from before the encryption too, and a new upload under v2 is encrypted on disk. The
+master key lies in the data folder (`files_encryption/`) and opens with the `secret` in
+`config.php`, which comes along in the `nextcloud_aio_nextcloud` volume: both are taken as they
+are, so nothing has to be done for it.
+
 Not in the rehearsal: the secrets read from a real master container's file; a data folder of
 270 GB (it stays on its disk, but its first start under v2 gives every file the containers'
 label, which takes time); v1 on another AIO release than v2 pulls that day; phones and desktop

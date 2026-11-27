@@ -108,8 +108,11 @@ L: days. New ideas go to the end of their section.
   machine itself after a start; choosing and loading a model in the app and on the control page. M
 - The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
   rebased on 0.125.0): to try on lemonaide when it is free, then release. S
-- Taking over a v1 installation's data (notes/migration.md): the rehearsal on throwaway VMs with
-  stand-in data, Nextcloud AIO first. L
+- Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
+  with a stand-in, with and without server-side encryption (27 Nov). Open: Vaultwarden with an
+  account and an item, a game save; then mulberry goes (`kiwi-server remove`, its VM on sh3). M
+- cloud: after a change of its name Talk keeps the old name in three lists (signalling, STUN,
+  TURN), the old one first; the module should drop the entries that are not its name. S
 
 ## 3. Dropped on 22 November 2026
 

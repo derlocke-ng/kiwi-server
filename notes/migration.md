@@ -137,8 +137,21 @@ was kept (`vault-client.py check`). The write-ahead files (`db.sqlite3-wal`, `-s
 with the folder; v2 starts with sign-ups off.
 
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
-stopped. Each save folder goes into the `games` module's folder for that game; checked by
-starting the server and seeing the world's name.
+stopped. v1 keeps one folder per server under `~/docker/games`; the `games` module keeps the
+save apart from the game's files, under `<docker folder>/kn-games/<server>/`. Where each goes
+(folder names read on sh3 on 27 Nov, the paths from the module's catalog; not rehearsed: the
+module needs the VPN, which the rehearsal machine does not have, and each game is gigabytes):
+
+| Game | v1's folder | goes into `kn-games/<server>/` |
+|---|---|---|
+| Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame` | `savegame` |
+| Minecraft, three worlds | `game-minecraft*/data` | `data` |
+| Abiotic Factor | `game-abiotic/data` | `saves` (to check: that v1's `data` is the game's `Saved` folder) |
+| Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder |
+
+The game's own files download again by themselves. Open: v1's Minecraft servers also have a
+`modpacks` folder each, which the catalog's Minecraft has no place for yet. Checked by starting
+the server and seeing the world's name.
 
 **The rehearsal** (before anything of v1 is wiped): on a throwaway VM, a small Nextcloud AIO
 set up the way v1 was (master container, the same parts), with a user and a file; a Vaultwarden

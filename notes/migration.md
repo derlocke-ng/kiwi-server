@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | not built, not rehearsed |
+| Taking over v1's data | planned below (27 Nov); not built, not rehearsed |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -46,6 +46,51 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
   the VMs: the owner's id-* VMs and the test machines medlar, quince, lychee, crumble-b, damson.
 - v2's cloud module runs the same AIO images and volume names without the mastercontainer, and
   the games module knows all five games. Whether each takes v1's data as it is: to be rehearsed.
+
+## Taking over v1's data (plan, 27 Nov; not rehearsed yet)
+
+Looked at on sh3 on 27 Nov, read only: names, paths and versions, no content and no secret.
+
+**Vaultwarden.** v1: the folder `~/docker/knvault` (SQLite, `rsa_key.pem`, attachments, sends),
+image `vaultwarden/server:latest-alpine` (1.37.5 that day). v2's `vault` module runs the same
+image on `<docker folder>/kn-vault`. The step: stop v1's container (its write-ahead log is
+written out), copy the folder as it is, apply. What changes is the name: `vault.sh3.kiwi` becomes
+`vault.<machine>.home`. A security key or passkey used as second factor is bound to the name and
+stops working; the authenticator app and the recovery code keep working. `vault.vault_domain`
+keeps the old name if that matters. Check after: sign in, open an item.
+
+**Nextcloud.** v1: AIO 15.1.1 with its master container, Nextcloud 35.0.3, PostgreSQL 18, the
+name `cloud.sh3.kiwi`. Its parts: Collabora, Talk, Imaginary, full-text search and Whiteboard are
+on; ClamAV, OnlyOffice and Talk's recording are off. Data folder
+`/mnt/nvme_2tb/docker/knnc-data`; volumes `nextcloud_aio_nextcloud`, `_database`,
+`_database_dump`, `_apache`, `_redis`, `_elasticsearch`. Upload limit 50G, memory 8192M.
+v2's `cloud` module runs the same containers on volumes of the same names, without the master
+container. What has to match:
+
+1. *The secrets.* AIO made its own (in its `configuration.json`: the database's and Redis's
+   passwords, Talk's, Whiteboard's, Imaginary's and the search's secrets, the admin password);
+   v2 makes its own from the seed. The database and Nextcloud's config hold v1's. So v1's go into
+   the new fleet's store as the `cloud` module's settings before the first apply, piped from the
+   file into the store, never shown (`kiwi-server secrets set`, pull request 409, not merged).
+2. *The version.* v2's `cloud.image_tag` must give the same AIO release as v1 ran last, or a
+   newer one; never an older one (Nextcloud and PostgreSQL do not go back).
+3. *The volumes.* Docker's volumes on Debian become Podman's on uCore: copied with owners and
+   modes kept (root on both sides), each under its own name.
+4. *The name.* `cloud.sh3.kiwi` becomes `cloud.<machine>.home`; the containers set the new name
+   at their start. The devices' Nextcloud apps are pointed at the new name once.
+5. *The settings.* `cloud.datadir`, the upload limit, the parts that are on, as v1 has them.
+
+Check after: sign in as the admin and as a user, a file opens, a file uploads, Talk and Collabora
+open, `occ status` and `occ db:add-missing-indices` say nothing is wrong.
+
+**Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
+stopped. Each save folder goes into the `games` module's folder for that game; checked by
+starting the server and seeing the world's name.
+
+**The rehearsal** (before anything of v1 is wiped): on a throwaway VM, a small Nextcloud AIO
+set up the way v1 was (master container, the same parts), with a user and a file; a Vaultwarden
+with an account and an item; a game save. Then the steps above onto a uCore VM, and the checks.
+Stand-in data only; v1's own data is copied only at the move, by the owner or with his yes.
 
 ## Before the move (the owner)
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.310.1 — a build of an Armbian image no longer takes the builder's /dev/kvm
+
+- **`armbian.builder`**: the build container has the builder's `/dev`, and packages set up inside
+  it gave `/dev/kvm`, `/dev/vhost-net` and `/dev/vhost-vsock` to a group that exists only in the
+  container. On the builder no virtual machine could be started any more; running ones went on
+  (sh3, from 22 to 27 Nov 2026). Who owns each device node is now noted before the container
+  works and put back after, also when a build fails. A builder that was hit: on it,
+  `docker exec kiwi-armbian-build chgrp "$(getent group kvm | cut -d: -f3)" /dev/kvm /dev/vhost-net /dev/vhost-vsock`,
+  or a restart of the machine.
+- `kiwi-server ai connect` (without `--apply`) writes its hint to stderr: its output is a file
+  OpenCode reads.
+
 ## 2.310.0 — the local AI: load a model, set up OpenCode
 
 - **`kiwi-server ai models`** lists the models a machine's AI has and which one is loaded.

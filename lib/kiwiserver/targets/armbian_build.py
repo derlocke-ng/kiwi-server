@@ -40,6 +40,24 @@ fi
 src=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/armbian"}}{{.Source}}{{end}}{{end}}' "$c")
 [ "$src" = "$w" ] || { echo "armbian.builder: the container $c builds in $src, not $w" >&2; exit 1; }
 [ "$(docker inspect -f '{{.State.Running}}' "$c")" = true ] || docker start "$c" >/dev/null
+# The container has the builder's /dev (the framework needs its loop devices), and packages set up
+# inside it give device nodes to groups by the container's numbers: /dev/kvm went to a group the
+# builder does not have, and no virtual machine started there any more (sh3, 22 to 27 Nov 2026).
+# So: who owns each node is noted before the container works and put back after.
+dev_keep() { find "${KIWI_DEV:-/dev}" -maxdepth 1 \( -type c -o -type b \) -printf '%%U %%G %%m %%p\n' 2>/dev/null | sort -k4; }
+dev_back() {    # $1: dev_keep's list from before
+    local u g m p now n=0
+    while read -r u g m p; do
+        [ -n "$p" ] && [ -e "$p" ] || continue
+        case ${p##*/} in tty*|console|ptmx) continue ;; esac     # terminals change hands with every login
+        now=$(stat -c '%%u %%g %%a' "$p" 2>/dev/null) || continue
+        [ "$now" = "$u $g $m" ] && continue
+        docker exec "$c" sh -c 'chown "$1:$2" "$4" && chmod "$3" "$4"' sh "$u" "$g" "$m" "$p" && n=$((n + 1))
+    done <<<"$1"
+    [ "$n" = 0 ] || echo "armbian.builder: $n device node(s) of $(hostname) given back to their owners (a package in the build container had changed them)" >&2
+}
+before=$(dev_keep)
+trap 'dev_back "$before"' EXIT
 docker exec -i "$c" bash -s <<'IN'
 set -eu
 export DEBIAN_FRONTEND=noninteractive
@@ -61,10 +79,32 @@ IN
 '''
 
 # the build itself; stdin of the first command is the one-time key, into the tmpfs
+GUARD = r'''# The container has the builder's /dev (the framework needs its loop devices), and packages set up
+# inside it give device nodes to groups by the container's numbers: /dev/kvm went to a group the
+# builder does not have, and no virtual machine started there any more (sh3, 22 to 27 Nov 2026).
+# So: who owns each node is noted before the container works and put back after.
+dev_keep() { find "${KIWI_DEV:-/dev}" -maxdepth 1 \( -type c -o -type b \) -printf '%%U %%G %%m %%p\n' 2>/dev/null | sort -k4; }
+dev_back() {    # $1: dev_keep's list from before
+    local u g m p now n=0
+    while read -r u g m p; do
+        [ -n "$p" ] && [ -e "$p" ] || continue
+        case ${p##*/} in tty*|console|ptmx) continue ;; esac     # terminals change hands with every login
+        now=$(stat -c '%%u %%g %%a' "$p" 2>/dev/null) || continue
+        [ "$now" = "$u $g $m" ] && continue
+        docker exec "$c" sh -c 'chown "$1:$2" "$4" && chmod "$3" "$4"' sh "$u" "$g" "$m" "$p" && n=$((n + 1))
+    done <<<"$1"
+    [ "$n" = 0 ] || echo "armbian.builder: $n device node(s) of $(hostname) given back to their owners (a package in the build container had changed them)" >&2
+}
+'''
+
 BUILD = r'''
 set -u
 c=%(c)s
+''' + GUARD + r'''before=$(dev_keep)
 docker exec "$c" bash -c 'cd /armbian && CRYPTROOT_PASSPHRASE="$(cat /secret/pass)" ./compile.sh build %(args)s; rc=$?; rm -f /secret/pass; exit $rc'
+rc=$?
+dev_back "$before"
+exit $rc
 '''
 
 

@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | Nextcloud rehearsed on a VM with a stand-in (27 Nov); Vaultwarden and game saves not yet |
+| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov); game saves not yet |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -47,7 +47,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 - v2's cloud module runs the same AIO images and volume names without the mastercontainer, and
   the games module knows all five games. Whether each takes v1's data as it is: to be rehearsed.
 
-## Taking over v1's data (plan, 27 Nov; Nextcloud rehearsed that day)
+## Taking over v1's data (plan, 27 Nov; Nextcloud and Vaultwarden rehearsed that day)
 
 Looked at on sh3 on 27 Nov, read only: names, paths and versions, no content and no secret.
 
@@ -127,6 +127,14 @@ apps pointed at the new name.
 
 For the real move the owner's part is step 2 on sh3 (root, or `docker run` with the volume),
 before anything is wiped. `kiwi-server secrets set` is in pull request 409, not merged.
+
+*Vaultwarden, rehearsed on 27 Nov 2026* on mulberry: a stand-in vault with v1's image and a plain
+data folder, an account with a login item in it (tests/drills/vault-client.py `make`, a small
+Bitwarden client). Then: the container stopped, the folder as an archive, unpacked into
+`<docker folder>/kn-vault` before the first apply, the `vault` module applied. The same account
+signs in under the new name with its master password, and the item's password is the one that
+was kept (`vault-client.py check`). The write-ahead files (`db.sqlite3-wal`, `-shm`) come along
+with the folder; v2 starts with sign-ups off.
 
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. Each save folder goes into the `games` module's folder for that game; checked by

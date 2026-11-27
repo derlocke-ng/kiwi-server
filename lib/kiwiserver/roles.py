@@ -220,6 +220,7 @@ def render_script(host, role, version, lib_text=None, bundle=None, ca_cert=None)
         "# It embeds this host's secrets — keep it private (mode 0600).",
         "#",
         "# shellcheck disable=SC2034   # generated settings are read by the role body",
+        "set +x      # never traced: the lines below hold this host's secrets, a trace would print them",
         "set -euo pipefail",
         "umask 022",
         "export LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive",

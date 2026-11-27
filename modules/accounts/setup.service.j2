@@ -5,8 +5,10 @@ After=kiwi-stack.service
 
 [Service]
 Type=oneshot
-# Kanidm takes a few seconds to start after an apply
-ExecStartPre=/bin/sh -c 'for i in $(seq 60); do {{ runtime }} exec {{ container_prefix }}-accounts kanidmd healthcheck -c /config/server.toml >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+# Kanidm takes a few seconds to start after an apply: wait until its page answers, two minutes at
+# most. (Until 0.126.2 this asked `kanidmd healthcheck`, which Kanidm 1.12 no longer has: the wait
+# never ended early, and every apply of the machine took two minutes more.)
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do curl -fsk -m 3 -o /dev/null https://{{ container_ip }}:8443/status && exit 0; sleep 2; done; exit 0'
 ExecStart=/bin/sh {{ docker_dir }}/kiwi/accounts.sh setup
 
 [Install]

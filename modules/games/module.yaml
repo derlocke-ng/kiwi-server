@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: games
   title: Game servers
-  version: 1.3.0
+  version: 1.4.0
   description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
   category: gaming
   node_types: [node]
@@ -155,7 +155,11 @@ settings:
         image: docker.io/wolveix/satisfactory-server:latest
         ports: [7777/udp, 7777/tcp, 8888/tcp]
         data: { config: /config }
+        # the image keeps the game inside its one folder: mounted apart, it stays out of the backup
+        files: { gamefiles: /config/gamefiles }
         env: { MAXPLAYERS: "4", PUID: "1000", PGID: "1000" }
+        # the server's own answer on its API port
+        health: ["sh", "-c", "curl -sk -m 10 -X POST https://127.0.0.1:7777/api/v1 -H 'Content-Type: application/json' -d '{\"function\":\"HealthCheck\",\"data\":{\"clientCustomData\":\"\"}}' | grep -q healthy"]
       palworld:
         title: Palworld
         image: docker.io/thijsvanloef/palworld-server-docker:latest

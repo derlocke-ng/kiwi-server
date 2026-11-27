@@ -32,7 +32,7 @@ Git's own accounts, no Kanidm. Everything else over the VPN only.
 | sh3's services | every module built; git and Nextcloud logins drilled through Tor; Vaultwarden and OpenCloud are not offered as hidden services |
 | Backups, restore, offsite | drilled (restore onto another machine, offsite against stand-ins); the backup before an update was broken until 2.300.0, now seen working on quince and lime |
 | Unlock | two rings, either enough, drilled; manual unlock over SSH before boot drilled |
-| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), a modded Minecraft, an Enshrouded and an Abiotic Factor world on lemonaide; Satisfactory not (one folder, nothing to sort) |
+| Taking over v1's data | Nextcloud and Vaultwarden rehearsed on a VM with stand-ins (27 Nov), all four kinds of game server on lemonaide (a modded Minecraft, Enshrouded, Abiotic Factor, Satisfactory) |
 
 ## sh3 today (looked at 22 Nov, read only)
 
@@ -139,15 +139,15 @@ with the folder; v2 starts with sign-ups off.
 **Game saves.** Enshrouded runs; Abiotic Factor, Satisfactory and three Minecraft worlds are kept
 stopped. v1 keeps one folder per server under `~/docker/games`; the `games` module keeps the
 save apart from the game's files, under `<docker folder>/kn-games/<server>/`. Where each goes
-(folder names read on sh3 on 27 Nov, the paths from the module's catalog; Minecraft,
-Enshrouded and Abiotic Factor rehearsed that night, see below; Satisfactory not):
+(folder names read on sh3 on 27 Nov, the paths from the module's catalog; all four kinds
+rehearsed that night with stand-in servers, see below):
 
 | Game | v1's folder | goes into `kn-games/<server>/` |
 |---|---|---|
 | Enshrouded (8.3 G with the game) | `game-enshrouded/server/savegame`; the rest of `game-enshrouded` | `savegame`; the rest into `kn-games-files/<server>/game` |
 | Minecraft, three worlds | `game-minecraft*/data`, `game-minecraft*/modpacks` | `data`; the pack into `kn-games-files/<server>/modpacks` |
 | Abiotic Factor | `game-abiotic/data`; `game-abiotic/gamefiles` | `saves` (v1's `data` is the game's `Saved` folder: it holds `SaveGames`, `Config`, `Logs`); the game into `kn-games-files/<server>/game` |
-| Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `config`, the whole folder (it is the image's one folder `/config` in v1 and in the catalog: nothing to sort; not rehearsed) |
+| Satisfactory | `game-satisfactory` (backups, gamefiles, logs, saved) | `gamefiles` into `kn-games-files/<server>/gamefiles`; the rest is `config` |
 
 The game's own files download again by themselves. Checked by starting the server and seeing
 the world's name.
@@ -176,6 +176,18 @@ into `env: {WorldSaveName: …}` (the folder's name on sh3 says which). The new 
 old world again five minutes after its start, with the same content, and downloaded nothing.
 Two things about this game: it saves by itself every five minutes and does not end when asked
 to (a stop ends it after 90 seconds), and without a password its image sets `password`.
+
+*Satisfactory, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/satisfactory-takeover.sh, all
+passed), with the catalog's image (wolveix/satisfactory-server), whose one folder `/config` is
+v1's `game-satisfactory`. Since kiwi-modules 0.133.0 the game itself is kept apart, so that it
+is not in every backup: stop the old server; move `game-satisfactory/gamefiles` to
+`<docker folder>/kn-games-files/<server>/gamefiles` and the rest of the folder to
+`<docker folder>/kn-games/<server>/config`; the server in the fleet file (`factory: {game:
+satisfactory}`) and apply. The stand-in had been claimed with an admin password and had a
+session and a save, made through the server's API as the game does it. The new server took
+the old admin password, ran the old session by itself and listed the save, 118 seconds after
+the apply and without a download. The server's name, its admin password and which session
+loads at the start are in `saved/ServerSettings.7777.sav` and come along.
 
 *Minecraft, rehearsed on 27 Nov 2026* on lemonaide (tests/drills/minecraft-takeover.sh, 14 of
 14). v1's three folders are servers of the image the catalog uses too (itzg/minecraft-server)

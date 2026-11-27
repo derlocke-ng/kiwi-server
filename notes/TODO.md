@@ -130,18 +130,16 @@ L: days. New ideas go to the end of their section.
 - Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
   with a stand-in, with and without server-side encryption (27 Nov); Vaultwarden with an
   account and an item (27 Nov); the games on lemonaide (tests/drills/minecraft-takeover.sh,
-  enshrouded-takeover.sh, abiotic-takeover.sh, the night of 27 Nov). Open: Satisfactory (one
-  folder, nothing to sort); then mulberry goes (`kiwi-server remove`, its VM on sh3): the
-  owner's word. S
+  enshrouded-takeover.sh, abiotic-takeover.sh, satisfactory-takeover.sh, the night of 27 Nov).
+  Open: mulberry goes (`kiwi-server remove`, its VM on sh3): the owner's word. S
 - ~~cloud: after a change of its name Talk keeps the old name in three lists.~~ Done
   (kiwi-modules 0.126.1, in 2.313.0).
 - Games, found at the takeover rehearsals (27 Nov 2026): a public Minecraft server with `sleep` is
   woken by the Internet's scanners again and again (medlar's `survival`: any knock on its port
-  counts; a wake only for a real join would need the first attempt to fail); Satisfactory's game
-  files lie inside its backed-up folder (the image keeps them in `/config/gamefiles`: a `files`
-  entry for that folder would keep them out of the backup, and moves an existing server's
-  files); Abiotic Factor's image sets the password `password` when none is given (said in
-  docs/roles.md; the catalog cannot say "none"). S each
+  counts; a wake only for a real join would need the first attempt to fail); Abiotic Factor's
+  image sets the password `password` when none is given (said in docs/roles.md; the catalog
+  cannot say "none"). ~~Satisfactory's game files lay inside its backed-up folder~~ (kiwi-modules
+  0.133.0). S each
 
 ## 3. Dropped on 22 November 2026
 

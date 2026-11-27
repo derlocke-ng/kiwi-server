@@ -2,6 +2,15 @@
 
 ## 2.318.0 — the parts say whether they work
 
+- **A node's tunnel to its master stays up while the master's way out is away.** The VPN
+  client's own check asks names on the Internet through the tunnel, and when that failed it
+  set the tunnel up anew: every six seconds for as long as the master's way out was away (27
+  Nov 2026: 76 times in eleven minutes on each of six machines), and a few times every
+  morning at seven when the way out reconnects. Each time everything on the mesh was cut for
+  that machine, and nothing was gained: it is the same server and the same keys. Now the
+  tunnel stays. Tried with the way to the Internet cut inside the tunnel: before, 23 restarts
+  in a minute and the mesh broke off; now none, 230 of 230 pings to the master answered
+  (kiwi-modules 0.134.0). Every node's VPN client restarts once with this apply.
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
   authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync

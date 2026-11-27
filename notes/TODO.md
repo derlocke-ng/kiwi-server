@@ -88,8 +88,9 @@ L: days. New ideas go to the end of their section.
        containers had none; podman drops the image's own), read by the status, the runbook and
        the careful apply; `verify` names an unhealthy one (kiwi-stack 0.9.41). Open: the other
        parts (portainer and CoreDNS have no shell; BTCPay's own services, the relay,
-       Tor, the AI; the gluetun of a node: its check passes on all eight, but it asks the
-       Internet through the master's exit, so a fault there would name every node), `verify`
+       Tor, the AI; the gluetun of a node: its check asks the Internet through the master's
+       exit, so a fault there would name every node; a check of the mesh itself needs a port
+       on the master's mesh address that always answers), `verify`
        at the end of an apply waiting for healthy, and the update going back on unhealthy.
        Each part says how to tell it is ready (a page, a port, a command): one check for apply,
        update (back on a failure: the runbook's update-failed), the runbook and the status page.

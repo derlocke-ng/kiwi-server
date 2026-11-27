@@ -16,6 +16,7 @@ services:
     - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=10s
     - DNS_UPSTREAM_RESOLVERS=cloudflare
     - BLOCK_MALICIOUS=off
+    - HEALTH_RESTART_VPN=off
     - FIREWALL_VPN_INPUT_PORTS=80,443,22
     networks:
       knet-node:

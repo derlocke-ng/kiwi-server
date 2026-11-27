@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: vpn-client
   title: VPN connection
-  version: 1.1.0
+  version: 1.1.1
   description: "gluetun — the tunnel every node hangs off: to the master (custom WireGuard config) or to a commercial VPN (the master's exit)"
   category: core
 

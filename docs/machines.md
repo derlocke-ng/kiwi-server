@@ -465,7 +465,13 @@ up from its profile: Kanidm's own client (`kanidm-unixd`, layered on Bluefin and
 counts from the next start: the agent restarts the computer then, only while nobody is logged
 in), Kanidm's authselect profile, and the sudo rule. A login is kept for when the computer is away
 from the network. Install media for a managed computer create no local user. For Fedora-based
-systems; what is installed and how the desktop is set (the policy) comes next.
+systems.
+
+Its software: `apps` in its block lists the Flatpaks it has for everyone (from Flathub, like
+`[org.mozilla.firefox, org.libreoffice.LibreOffice]`), and only the network's admins install or
+remove software for the whole computer (`lock_software`, on unless set to `false`; a polkit
+rule). A person can still install a Flatpak into their own home folder; locking that too, and how
+the desktop is set (GNOME's settings and locks), come next.
 
 **A new computer from a stick:** `kiwi-server client iso` makes install media that installs
 Silverblue, Bluefin or Bluefin-DX and joins the network at the computer's first start:

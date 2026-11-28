@@ -113,5 +113,7 @@ installs the same way already. NixOS later: the agent as a NixOS module.
 4. This desktop, Bluefin-DX on the workstation, one pentest SSD, the laptops.
 5. ~~The unlock policy per client~~ (2.331.0), proven on the Debian VM.
 6. The install media for Silverblue, Bluefin and Bluefin-DX.
-7. Managed computers: the accounts, then the policy, on a Silverblue VM first.
+7. Managed computers: ~~the accounts (kanidm-unixd), the apps and who installs~~ (next release,
+   tested against stand-ins), then on a Bluefin VM; then GNOME's settings and locks, a person's
+   own installs (malcontent), the browser's policy.
 8. The agent's script into kiwi-agent; the page's switch for a computer's auto-unlock.

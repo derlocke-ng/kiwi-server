@@ -7202,7 +7202,7 @@ class TestUnlock(Base):
         with mock.patch.object(remote, "run", fake_run):
             self.assertTrue(unlock._coreos_key(h, "core@plum", {}))
         key = util.read_bytes(luks.key_file(h)).decode().strip()
-        self.assertEqual(sent[0][1], (key + "\n").encode())
+        self.assertEqual(sent[0][1], (key + "\n\n").encode())        # the key, and nothing known of an earlier answer
         self.assertNotIn(key, sent[0][0])
         self.assertIn("clevis luks pass", sent[0][0])
 

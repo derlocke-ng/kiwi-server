@@ -278,7 +278,40 @@ def lean_load(fleet, host, model, say=util.say, wait=1800):
     raise KiwiError("%s: %s is not loaded after %d minutes: kiwi-stack logs on the machine say why" % (host.name, model, wait // 60))
 
 
-def lean_ready(fleet, host, name=None, context=None, say=util.say):
+PLACED = r"""c=$(podman ps --format '{{.Names}}' | grep -E '^k[mn]-ai$' | head -n 1)
+[ -n "$c" ] && podman logs --since %ds "$c" 2>&1 | grep -o 'offloaded [0-9]*/[0-9]* layers to GPU' | tail -n 1"""
+
+
+def placed(host, since, run=None):
+    """(layers on the card, layers in all) of the model llama.cpp loaded in the last SINCE seconds,
+    from its log, or None when the log does not say (a machine without a card says nothing). A
+    model that does not fit beside what ai.card_free_mb leaves goes to the processor without an
+    error (28 Nov 2026, lemonaide beside Studio)."""
+    from . import remote
+    try:
+        out = (run or remote.run)(remote.reach(host, None), PLACED % max(int(since), 1)).decode(errors="replace")
+    except (KiwiError, OSError):
+        return None
+    m = re.search(r"offloaded (\d+)/(\d+) layers", out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def placement_said(host, model, got):
+    """What `ai load` says about where the model went: nothing when the log did not say."""
+    if not got:
+        return None
+    on, total = got
+    if total and on >= total:
+        return "%s: %s is on the graphics card (all %d layers)" % (host.name, short(model), total)
+    if on == 0:
+        return ("%s: %s runs on the processor, not on the card: slower. The card has too little room beside what "
+                "ai.card_free_mb leaves to other programs (less, like 256, lets a small model on; or a smaller model)"
+                % (host.name, short(model)))
+    return ("%s: %s is only partly on the card (%d of %d layers), the rest on the processor: slower. ai.card_free_mb, "
+            "or a smaller model, puts it all on the card" % (host.name, short(model), on, total))
+
+
+def lean_ready(fleet, host, name=None, context=None, say=util.say, run=None):
     """ready() for llama.cpp's server alone: the model named, else the one in memory, else the
     fleet's first. Its context is the fleet's ai.context, not one asked for per load."""
     entries = models(fleet, host)
@@ -297,7 +330,11 @@ def lean_ready(fleet, host, name=None, context=None, say=util.say):
         say("%s: %s is asleep and comes back with the next request" % (host.name, short(e["id"])))
     else:
         say("%s: loading %s" % (host.name, short(e["id"])))
+        began = time.time()
         lean_load(fleet, host, e["id"], say)
+        where = placement_said(host, e["id"], placed(host, time.time() - began + 30, run))
+        if where:
+            say(where)
     have = lean_context(fleet, host, e["id"])
     if context and have and int(context) != have:
         say("%s: its context is %d tokens, the fleet's ai.context: change it there, not per load" % (host.name, have))

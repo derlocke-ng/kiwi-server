@@ -162,14 +162,28 @@ def listing(data):
 def lean_listing(data, context=None):
     """llama.cpp's /v1/models in the same shape. There a model is one name with its quant in it, and
     it is loaded, asleep (out of the memory until the next request, which brings it back) or not
-    loaded. Loaded and asleep both count as loaded here: neither needs a load. `state` says which."""
+    loaded. Loaded and asleep both count as loaded here: neither needs a load. `state` says which;
+    `aliases`, the other names it answers to (the fleet's own, see lean_id)."""
     out = []
     for m in data or []:
         mid, state = str(m.get("id") or ""), str((m.get("status") or {}).get("value") or "")
         if mid:
             out.append({"id": mid, "quants": [], "quant": "", "loaded": state in ("loaded", "sleeping"),
-                        "state": state, "context": context})
+                        "state": state, "context": context, "aliases": [str(a) for a in m.get("aliases") or []]})
     return out
+
+
+def lean_id(name):
+    """The name llama.cpp's server lists a model under that the fleet names user/model:QUANT. It
+    takes the quant as the end of a file's name, upper case: UD-Q4_K_S is listed as Q4_K_S, q8_0 as
+    Q8_0 (its canonical_tag; lemonaide, 28 Nov 2026: the fleet's model was not found, and the first
+    model in the list was loaded instead). The ai module gives such a model the fleet's name as an
+    alias, since kiwi-modules 0.142.0; this finds it in a list without one too."""
+    head, colon, tag = str(name).rpartition(":")
+    if not colon:
+        return str(name)
+    end = re.split(r"[-.]", tag)[-1]
+    return "%s:%s" % (head, (end if re.fullmatch(r"[A-Za-z0-9_]+", end or "") else tag).upper())
 
 
 def lean_context(fleet, host, model=None):
@@ -318,9 +332,9 @@ def lean_ready(fleet, host, name=None, context=None, say=util.say, run=None):
     if not entries:
         raise KiwiError("%s: llama.cpp offers no model: ai.models in the fleet names them" % host.name)
     if name:
-        e, _q = pick(entries, name)
-    else:
-        first = [str(x) for x in (host.module_settings.get("ai") or {}).get("models") or []][:1]
+        e, _q = pick(entries, lean_id(name))
+    else:       # the one in memory, else the fleet's first; the list's first only when the fleet names none it has
+        first = [lean_id(x) for x in (host.module_settings.get("ai") or {}).get("models") or []][:1]
         e = (next((x for x in entries if x["loaded"]), None) or next((x for x in entries if x["id"] in first), None)
              or entries[0])
     there = e["state"] == "loaded"

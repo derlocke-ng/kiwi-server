@@ -27,6 +27,7 @@ before=$(mktemp "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kiwi-fleet.XXXXXX") || e
 done_() {
     vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")" 2>/dev/null
     [ -s "$before" ] && ! cmp -s "$before" "$fleet" && cp "$before" "$fleet" && "$KIWI" control push "$fleet" >/dev/null 2>&1
+    vssh "sudo sed -i '/ # kiwi-client-drill\$/d' /etc/hosts" 2>/dev/null
     rm -f "$before"; desk_cleanup
 }
 trap done_ EXIT
@@ -47,14 +48,17 @@ import sys
 from kiwiserver import config, machineagent, modules
 f = config.Fleet.load(sys.argv[1]); print(machineagent.url(f, modules.discover()) or "")' "$fleet")
 host=${url#https://}
-if ! vssh "getent hosts $host" >/dev/null; then
-    # a VM behind its host's NAT asks the host's resolver, which may not know the network's names
-    addr=$(PYTHONPATH="$here/lib" python3 -c '
+# a VM behind its host's NAT asks its host's resolver (on sh3: v1's, which knows no .home names):
+# the control node's LAN address goes into its /etc/hosts for the drill, and out again after
+addr=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import config, machineagent
 f = config.Fleet.load(sys.argv[1]); h = machineagent.control_host(f); print(((h.cfg.get("network") or {}).get("address") or "").split("/")[0])' "$fleet")
-    vssh "echo '$addr $host' | sudo tee -a /etc/hosts >/dev/null"; say "        $host: not in the VM's DNS, written into its /etc/hosts ($addr)"
-fi
+vssh "sudo sed -i '/ # kiwi-client-drill\$/d' /etc/hosts; echo '$addr $host # kiwi-client-drill' | sudo tee -a /etc/hosts >/dev/null"
+say "        $host at $addr in the VM's /etc/hosts"
+# the VM's clock as this computer's: a report more than five minutes off is refused (its own clock
+# ran 23 minutes ahead, 28 Nov 2026)
+vssh "sudo date -u -s @$(date +%s) >/dev/null"; check $? "the VM's clock set from this computer's"
 script=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import clientagent, config, util

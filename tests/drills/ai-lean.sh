@@ -73,8 +73,9 @@ check(bool(have) and all(x in have for x in want), "it offers the models the fle
 if have:
     first = want[0] if want and want[0] in have else sorted(have)[0]
     try:
-        text, first_token, n, writing = ai.ask(fleet, h, first, "Say hello in five words.", 40)
-        check(bool(text.strip()), "%s answers (first token after %.1f s, %.1f tokens/s)" % (first, first_token, n / writing))
+        got = ai.ask(fleet, h, first, "Say hello in five words.", 40)        # a dict since 2.310.0
+        check(bool(got["text"].strip()), "%s answers (first token after %.1f s, %.1f tokens/s)"
+              % (first, got["first_s"], got["tokens"] / got["writing_s"]))
     except Exception as e:  # noqa: BLE001
         check(False, "%s answers (%s)" % (first, e))
     idle = int(s.get("idle_minutes") or 0)
@@ -84,9 +85,9 @@ if have:
         time.sleep(wait)
         check(status().get(first) in ("sleeping", "unloaded"), "idle for %d minute(s): %s left the memory" % (idle, first))
         try:
-            text, first_token, _n, _w = ai.ask(fleet, h, first, "Say hello in five words.", 40)
-            check(bool(text.strip()) and status().get(first) == "loaded",
-                  "the next request brings it back (first token after %.1f s)" % first_token)
+            got = ai.ask(fleet, h, first, "Say hello in five words.", 40)
+            check(bool(got["text"].strip()) and status().get(first) == "loaded",
+                  "the next request brings it back (first token after %.1f s)" % got["first_s"])
         except Exception as e:  # noqa: BLE001
             check(False, "the next request brings it back (%s)" % e)
     else:

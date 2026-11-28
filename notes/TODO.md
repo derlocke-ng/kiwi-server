@@ -165,6 +165,12 @@ L: days. New ideas go to the end of their section.
 - The local AI, loading the chosen model by itself after a start (above): Studio's API key
   would have to lie on the machine, or the control node loads it when the machine reports in.
   Which of the two is the owner's choice (secrets at rest). M
+- The lean AI (from its test on lemonaide, 28 Nov 2026): `kiwi-server status` could say when a
+  model went to the processor (the log's "offloaded 0/N layers"); a UD- quant (UD-Q4_K_S) is listed
+  by llama.cpp as Q4_K_S; a models folder shared with another program makes it offer every model
+  cached there. S each
+- `kiwi-server remove` sets a machine's kept secrets aside (2.326.1); its disk keys
+  (`secrets/luks/<machine>.*`) stay under its name, and a new machine of that name would find them. S
 
 ## 3. Dropped on 22 November 2026
 

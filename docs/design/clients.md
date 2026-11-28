@@ -1,6 +1,7 @@
 # People's computers as clients (design, 28 Nov 2026)
 
-Designed, not built. What the owner asked for at the move (28 Nov): see which clients run, and push
+Partly built: the agent reports (2.329.0), and the Devices page shows each computer with the
+machine whose hardware it runs on (next release). The rest is designed, not built. What the owner asked for at the move (28 Nov): see which clients run, and push
 what they need. It builds on the servers' agent, the access manager, the unlock design
 ([unlock.md](unlock.md), "Desktops and laptops"), and [ui.md](ui.md) ("Desktops and laptops as
 clients": managed through the control node's API, not by a second tool).

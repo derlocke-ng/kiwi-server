@@ -543,6 +543,10 @@ lychee:
   it, and one model is in memory at a time. A model is downloaded at its first use.
 - `idle_minutes` (10): a model that nobody asked for this long leaves the memory. The next
   request loads it again, which takes a few seconds. `0` keeps it loaded.
+- `card_free_mb` (1024): how much of the graphics card llama.cpp leaves to other programs.
+  On a card another program holds most of (Studio beside it), a model goes to the processor;
+  the log of `kn-ai` says where each model went ("offloaded 19/19 layers to GPU"). Less, like
+  256, lets a small model onto such a card.
 - `context` (8192) is the number of tokens a model keeps in view. `threads` limits the
   processor threads it uses, so that the machine's other services keep their share.
 - The API key is made by kiwi-server from the fleet's seed. `kiwi-server logins` shows it,

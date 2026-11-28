@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: ai
   title: Local AI
-  version: 1.0.0
+  version: 1.1.0
   description: "A language model at home, at ai.<hostname>, on the LAN and/or the VPN only, with a key. As Unsloth Studio, its web page and its OpenAI-compatible API (/v1/...), for a machine with a big graphics card (AMD or NVIDIA); or as llama.cpp's server alone, the same API and a small chat page, for a machine with a small graphics chip or none. Front-ends such as opencode talk to its API"
   category: productivity
   node_types: [node]
@@ -49,6 +49,8 @@ validate:
     error: "ai.models: a model is named as on Hugging Face, user/model or user/model:quant (like ggml-org/gemma-3-4b-it-GGUF:Q4_K_M)"
   - when: "context < 0 or idle_minutes < 0 or threads < 0"
     error: "ai.context, ai.idle_minutes and ai.threads: 0 or more"
+  - when: "card_free_mb < 0 or card_free_mb > 65536"
+    error: "ai.card_free_mb: 0 to 65536 MiB"
   - when: "not allow"
     error: "ai.allow: nobody may reach it; kiwi-server fills it in from ai.listen (lan, vpn)"
   - when: "listen | reject('in', ['lan', 'vpn']) | list"
@@ -144,6 +146,12 @@ settings:
     label: Processor threads
     help: "For llama: how many threads a model may use. 0: llama.cpp decides (all cores). Fewer leaves the machine's other services their share, above all with gpu: none."
     default: 0
+  - key: card_free_mb
+    type: int
+    group: llama.cpp
+    label: Left free on the card (MiB)
+    help: "For llama with a graphics card: how much of the card's memory llama.cpp leaves free for other programs when it plans where a model goes. A model that does not fit beside that goes partly or wholly to the processor, slower, without an error; the log says it (offloaded N/M layers to GPU). On a card another program holds (Studio, a game), less, like 256, lets a small model onto it. 1024 is llama.cpp's own."
+    default: 1024
   - key: allow
     type: list
     group: Advanced

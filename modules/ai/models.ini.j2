@@ -8,6 +8,14 @@ ctx-size = {{ context }}
 {% if threads %}
 threads = {{ threads }}
 {% endif %}
+{% if gpu != 'none' %}
+; how much of the card is left free for other programs (ai.card_free_mb): a model that does not fit
+; beside it goes to the processor without an error
+fit-target = {{ card_free_mb }}
+; one step more detail in the log, so that it says where each model went ("offloaded N/M layers to
+; GPU"): 0 of them means the processor. (About 30 lines more per request; no request's text.)
+log-verbosity = 4
+{% endif %}
 ; a model named here and already downloaded is listed once
 dedup-cache-models = true
 {% for m in models %}

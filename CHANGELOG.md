@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.327.0 — the moving address stays when both gateways see the same fault
+
+- **The moving address (vip)** no longer disappears when both machines of a pair fail the same
+  check at once. A failed check (the Pi-hole answers no name; the master does not answer
+  through the machine) used to put the machine into a fault state, and when the master's VPN
+  server restarted (28 Nov 2026, an apply), both gateways lost their route to it in the same
+  second: for 17 seconds nobody held 192.168.2.69, and the home had neither DNS nor its
+  gateway, though both Pi-holes answered. Now a failed check lowers the machine's priority: a
+  single failing machine still hands the address to the other, and when both fail, the holder
+  keeps it (kiwi-modules 0.139.0, keepalived image 2.3-kiwi3; the image's pair test shows both
+  cases with the old and the new image). The vip container restarts once with the apply; the
+  address moves to the other machine for that moment.
+- **The lean AI** says where each model went in its log (on the card, or on the processor), and
+  `ai.card_free_mb` (default 1024, llama.cpp's own) sets how much of the card it leaves to other
+  programs: on a card another program holds, a model went to the processor without a word
+  (kiwi-modules 0.138.0; tried on lemonaide beside Studio).
+
 ## 2.326.1 — an order's answer at once; two small fixes
 
 - A machine's agent sends what came of an order at once, in a report of its own, instead of

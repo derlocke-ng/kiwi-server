@@ -3916,20 +3916,28 @@ def cmd_apply(args):
                 away.append(h.name)
                 util.warn("%s does not answer: left out, nothing changed there (%s)" % (h.name, str(e).splitlines()[-1][:120]))
                 continue
+            master = h.role in roles and roles[h.role].node_type == "master"
+            silent = []
+            if master:
+                # the sites that do not answer through it before its apply (a machine that is off) do
+                # not stop the apply after it: asked once now, without waiting (28 Nov 2026, lemonaide off)
+                every = carefulmod.network_names(r)
+                silent = carefulmod.silent(h, remote.reach(h), every)
             one(h, "")
             if h.name in failed:
                 raise KiwiError("%s failed: stopped here. Not touched: %s" % (h.name, left))
             names = carefulmod.names_of(r, h)
             bad = carefulmod.answers(h, remote.reach(h), names)
             through = ""
-            if not bad and h.role in roles and roles[h.role].node_type == "master":
+            if not bad and master:
                 # its VPN server may have restarted: the network's sites answer through it again first
-                every = carefulmod.network_names(r)
-                gone = carefulmod.answers(h, remote.reach(h), every, script=carefulmod.MESH_SCRIPT)
+                asked = [n for n in every if n not in silent]
+                gone = carefulmod.answers(h, remote.reach(h), asked, script=carefulmod.MESH_SCRIPT)
                 if gone:
                     raise KiwiError("%s is applied, and from it these sites of the network do not answer: %s. Stopped "
                                     "here. Not touched: %s" % (h.name, ", ".join(gone), left))
-                through = "; the network's %d sites answer through it" % len(every)
+                through = "; the network's %d sites answer through it%s" % (
+                    len(asked), " (not %s, silent before its apply too)" % ", ".join(silent) if silent else "")
             if bad:
                 sick = [b.rsplit(":", 1)[0] for b in bad if b.endswith(":unhealthy")]
                 sites = [b for b in bad if not b.endswith(":unhealthy")]
@@ -4920,7 +4928,9 @@ def cmd_client(args):
             raise KiwiError("the command comes from the control node: join it first (kiwi-server control join %s LINK)"
                             % typed_path(args.fleet))
         print(controlsync.client_invite_api(fleet.dir, name))
-        util.say("run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name)
+        # not on stdout: that is the command alone, as `$(kiwi-server client invite …)` takes it
+        print(":: run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name,
+              file=sys.stderr)
         return
     if args.action == "install":
         if bool(args.here) == bool(args.ssh):

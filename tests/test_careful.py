@@ -84,6 +84,16 @@ class TestCareful(unittest.TestCase):
         self.assertIn('podman exec "$p" curl', sent[0])
         self.assertIn("NAMES='pihole.lime.home vault.quince.home'", sent[0])
 
+    def test_a_site_silent_before_a_masters_apply_is_not_asked_after_it(self):
+        """lemonaide was off (28 Nov 2026): its site did not answer before sorbet's apply either, and
+        stopped the careful apply after it. Now it is asked once before, without waiting."""
+        sent = []
+        got = careful.silent(host("sorbet", role="master"), "core@sorbet", ["ai.lemonaide.home", "cloud.papaya.home"],
+                             run=lambda t, s: sent.append(s) or b"bad ai.lemonaide.home:000\n")
+        self.assertEqual(got, ["ai.lemonaide.home"])
+        self.assertEqual(len(sent), 1)                                  # once: no waiting for it
+        self.assertIn("podman exec \"$p\" curl", sent[0])
+
     def test_only_the_machines_own_names_under_the_fleets_domain_are_asked(self):
         r = types.SimpleNamespace(scan=lambda: None, aliases={"cloud.home"},
                                   _names={"medlar.home": ["medlar.home", "git.medlar.home", "*.medlar.home", "paste.dlhost.eu",

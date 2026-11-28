@@ -3394,8 +3394,8 @@ def make_app(control: Control):
         `sudo sh` on that computer."""
         script = control.client_join(code[:64]) if re.fullmatch(r"[A-Za-z0-9_-]{16,64}", code or "") else None
         if script is None:
-            return PlainTextResponse("echo 'kiwi-server: this join command is used up, too old or unknown: make a new one "
-                                     "on the control page (Devices, Add a computer)' >&2; exit 1\n", status_code=410)
+            return PlainTextResponse("kiwi-server: this join command is used up, too old or unknown: make a new one on the "
+                                     "control page (Devices, the computer's Join command)\n", status_code=410)
         return PlainTextResponse(script, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/client/invite")

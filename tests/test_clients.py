@@ -262,8 +262,21 @@ class TestClientAgent(unittest.TestCase):
         self.assertNotIn("key=$(cat)", s)
         self.assertEqual(subprocess.run(["bash", "-n"], input=s, text=True, capture_output=True).returncode, 0)
         c = clientagent.join_command("https://control.papaya.home", "abc_DEF-123", "QUJD")
-        self.assertEqual(c, 'c=$(mktemp) && echo QUJD | base64 -d > "$c" && curl -fsS --cacert "$c" '
-                            'https://control.papaya.home/api/client/join/abc_DEF-123 | sudo sh; rm -f "$c"')
+        self.assertIn('echo QUJD | base64 -d > "$c"; s=$(curl -sS --fail-with-body --cacert "$c" '
+                      'https://control.papaya.home/api/client/join/abc_DEF-123); r=$?; rm -f "$c"', c)
+        # run for real against stand-ins: the script goes to sudo sh; a spent code fails and says why
+        t = tempfile.mkdtemp()
+        for name, body in (("curl", 'case "$*" in *spent*) echo "kiwi-server: used up"; exit 22 ;; esac; echo "echo ran-the-script"\n'),
+                           ("sudo", '"$@"\n')):
+            with open(os.path.join(t, name), "w") as f:
+                f.write("#!/bin/bash\n" + body)
+            os.chmod(os.path.join(t, name), 0o755)
+        env = dict(os.environ, PATH=t + ":" + os.environ["PATH"])
+        r = subprocess.run(["bash", "-c", c], env=env, capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "ran-the-script"))
+        spent = clientagent.join_command("https://control.papaya.home", "spent", "QUJD")
+        r = subprocess.run(["bash", "-c", spent], env=env, capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout, r.stderr.strip()), (1, "", "kiwi-server: used up"))
 
     def test_the_fleet_names_its_clients(self):
         self.assertEqual(clientagent.names(FakeFleet({"pentest-1": None, "desk": {"group": "admins"}})),

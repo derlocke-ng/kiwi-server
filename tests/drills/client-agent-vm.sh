@@ -90,7 +90,7 @@ IFS='|' read -r os box crypt clevis agent <<<"$row"
 case $os in *Debian*) true ;; *) false ;; esac; check $? "its system: ${os:-?}"
 [ ${#box} = 16 ]; check $? "the box it runs on, as a salted sum: ${box:-none}"
 [ "${crypt:-0}" -ge 1 ] && [ "${clevis:-0}" -ge 1 ]; check $? "its disk: ${crypt:-?} encrypted, ${clevis:-?} bound to rings"
-n=24; while [ "$n" -gt 0 ]; do vssh "test -s /var/lib/kiwi-client/profile.sum" 2>/dev/null && break; sleep 5; n=$((n - 1)); done
+n=24; while [ "$n" -gt 0 ]; do vssh "sudo test -s /var/lib/kiwi-client/profile.sum" 2>/dev/null && break; sleep 5; n=$((n - 1)); done
 [ "$n" -gt 0 ]; check $? "its profile is applied"
 vssh "test -s /usr/local/share/ca-certificates/kiwi-home.crt || test -s /etc/pki/ca-trust/source/anchors/kiwi-home.pem"
 check $? "the network's CA is in the VM's trust store"

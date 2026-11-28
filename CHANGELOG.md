@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.330.1 — three fixes from the first rollout and drill of 2.330.0
+
+- **`apply --careful`**: a site of the network that does not answer through a master before its
+  apply (a machine that is off) no longer stops the apply after it; the master's line names it.
+  With lemonaide switched off, the rollout of 2.330.0 stopped after sorbet for that alone.
+- **The join command** of a computer fails, and says why, when its code is used up or too old;
+  before, it did nothing and ended well.
+- **`client invite`** prints the command alone on standard output, the hint on standard error,
+  so `$(kiwi-server client invite …)` gives the command.
+- The client drill (`tests/drills/client-agent-vm.sh`) passed on the Debian desktop VM against
+  2.330.0 except for these: the join, the profile (the CA in the system's trust, the
+  `kiwi-home` connection carrying the mesh and not the Internet) and an order.
+
 ## 2.330.0 — people's computers joined, kept and updated by the network
 
 - **Clients** (docs/machines.md, "People's computers"): *Add a computer* on the Devices page

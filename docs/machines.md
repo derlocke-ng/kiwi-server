@@ -439,8 +439,10 @@ kiwi-server client install fleet.yaml desk --here
 VPN, not only the network). `install --here` puts the agent on this computer (`sudo` asks for
 your password); `--ssh USER@ADDRESS` puts it on another one. `client invite fleet.yaml NAME` prints
 the one-time command, as the page shows it. `client list` shows the clients with their last
-report. `client remove` takes a client out of the fleet file and off the VPN, and with `--ssh`
-the agent off the computer.
+report. `client remove` takes a client out of the fleet file and off the VPN.
+
+**A computer leaves:** `sudo kiwi-client-agent leave` on it takes away what the agent put there:
+its VPN connection, the network's CA, its disk's binding to the rings, and the agent itself.
 
 **What the agent does:**
 
@@ -457,9 +459,14 @@ the agent off the computer.
   Devices page, or `kiwi-server control order fleet.yaml NAME update`. Nothing else, never a
   command.
 
+**Its disk:** a client with `unlock:` (`rings`, `threshold`, `switch`, as a machine's) gets the
+rings' policy in its profile. Binding the disk needs its passphrase once: `sudo kiwi-client-agent
+bind` at the computer installs clevis and its boot-system part, gives the boot system the network,
+and asks for the passphrase. From then on the agent keeps the binding as the network says (other
+rings, new keys) without the passphrase, and unbinds it when `unlock:` goes. The passphrase
+always opens the disk too. With `switch`, auto-unlock is switched on the page as a machine's.
+
 Everything it sends and gets is signed with a key of its own. Nothing listens on the computer.
-Taking the agent away leaves the VPN connection and the CA where they are; remove them in the
-computer's network settings, if you want them gone.
 
 ## Remove a machine
 

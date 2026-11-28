@@ -8,7 +8,7 @@ earlier. While asleep `status` says so instead of counting it as gone, so no mes
 import datetime
 import re
 
-from . import remote, util
+from . import remote, unitsh, util
 from .util import KiwiError
 
 TIME = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -46,19 +46,21 @@ SERVICE = ("[Unit]\nDescription=kiwi-server: asleep from %(from)s until %(until)
            "[Service]\nType=oneshot\nExecStart=%(path)s\n")
 TIMER = ("[Unit]\nDescription=kiwi-server: asleep from %(from)s until %(until)s\n\n"
          "[Timer]\nOnCalendar=*-*-* %(from)s:00\nOnCalendar=*:0/15\nAccuracySec=1min\n\n[Install]\nWantedBy=timers.target\n")
-INSTALL = r'''set -eu
+INSTALL = "set -eu\n" + unitsh.PRELUDE + r'''
 install -d -m 0755 /usr/local/sbin
 cat > %(path)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
 chmod 0755 %(path)s.new && mv %(path)s.new %(path)s
-cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
+kiwi_unit %(unit)s.service <<'KIWI_EOF'
 %(service)sKIWI_EOF
-cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
+kiwi_unit %(unit)s.timer <<'KIWI_EOF'
 %(timer)sKIWI_EOF
-systemctl daemon-reload
-systemctl enable --now -q %(unit)s.timer
+kiwi_reload
+kiwi_enable --now %(unit)s.timer
 '''
-REMOVE = ("systemctl disable --now -q %(unit)s.timer 2>/dev/null || true; rm -f %(path)s /etc/systemd/system/%(unit)s.service "
+# (nothing of it there: nothing to do. `systemctl disable` makes systemd read all its units again even then)
+REMOVE = ("[ -e /etc/systemd/system/%(unit)s.timer ] || [ -e %(path)s ] || exit 0; "
+          "systemctl disable --now -q %(unit)s.timer 2>/dev/null || true; rm -f %(path)s /etc/systemd/system/%(unit)s.service "
           "/etc/systemd/system/%(unit)s.timer; systemctl daemon-reload" % {"unit": UNIT, "path": SCRIPT_PATH})
 
 

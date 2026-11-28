@@ -187,7 +187,7 @@ class TestApply(unittest.TestCase):
         ran[:] = []
         self.assertEqual(runbook.after_apply(f, f.hosts["medlar"], "t", render, False, run), [("kn-git", "part-down", "restart", 1, 3)])
         self.assertIn("kn-git part-down restart 1 3\n", ran[0])
-        self.assertIn("systemctl enable -q --now kiwi-runbook.timer", ran[0])
+        self.assertIn("kiwi_enable --now kiwi-runbook.timer", ran[0])
 
 
 @unittest.skipUnless(__import__("shutil").which("bash") and __import__("shutil").which("flock"), "bash and flock needed")

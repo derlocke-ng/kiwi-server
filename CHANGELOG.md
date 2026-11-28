@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.321.0 — an apply that changes nothing is a third faster again
+
+- An apply made systemd read all its units again seventeen times, changed or not: once for
+  every `systemctl enable`, `disable` and `daemon-reload` on its way. One such reload takes a
+  quarter of a second on a small virtual machine, 0.8 s on a server with many units and a
+  second and a half on a Rock Pi. Now a unit is written only when it differs, enabled only when
+  it is not yet, and systemd reads its units again only when one was written or removed
+  (kiwi-stack 0.9.43 for the role; `unitsh.py` for kiwi-server's own units: the agent, the
+  rings' answer, the leash, the opener, the runbook, asleep). An apply that changes nothing:
+  17 reloads became none; 67 s became 43 s on a Rock Pi E, 29 s became 21 s and 14 s became
+  10 s on two virtual machines. Drilled before the release: an upgrade from 2.306.0, the
+  pre-flights, a setting change, the runbook's units, a module added and removed, a hard
+  power cut.
+- `tests/drills/games-sleep.py` says who woke a server that would not sleep.
+
 ## 2.320.0 — the log says who woke a sleeping game server
 
 - **games**: when a sleeping server wakes, the sleep service's log on the machine names where

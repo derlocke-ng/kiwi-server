@@ -8,6 +8,7 @@ that fits a machine (and a part) wins; a case no line covers is told, and nothin
         - { case: machine-gone, for: sorbet, do: restart, after: 15 }
 
 Step 1 of the design: the table, checked, and its sentences per machine. Nothing acts by it yet."""
+from . import unitsh
 from .util import KiwiError
 
 # case: (who sees it, its actions, what it is in words)
@@ -221,7 +222,7 @@ exit 0
 SERVICE = "[Unit]\nDescription=kiwi-server: this machine's runbook\n\n[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH
 TIMER = ("[Unit]\nDescription=kiwi-server: this machine's runbook, every minute\n\n[Timer]\nOnBootSec=3min\n"
          "OnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n")
-INSTALL = r'''set -e
+INSTALL = "set -e\n" + unitsh.PRELUDE + r'''
 install -d -m 0755 %(dir)s
 cat > %(dir)s/conf.new <<'KIWI_EOF'
 %(conf)sKIWI_EOF
@@ -229,12 +230,12 @@ mv %(dir)s/conf.new %(dir)s/conf
 cat > %(path)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
 chmod 0755 %(path)s.new && mv %(path)s.new %(path)s
-cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
+kiwi_unit %(unit)s.service <<'KIWI_EOF'
 %(service)sKIWI_EOF
-cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
+kiwi_unit %(unit)s.timer <<'KIWI_EOF'
 %(timer)sKIWI_EOF
-systemctl daemon-reload
-systemctl enable -q --now %(unit)s.timer
+kiwi_reload
+kiwi_enable --now %(unit)s.timer
 '''
 REMOVE = ("[ -e %s ] || exit 0; systemctl disable -q --now %s.timer 2>/dev/null || true; "
           "rm -rf %s %s /etc/systemd/system/%s.service /etc/systemd/system/%s.timer; systemctl daemon-reload"

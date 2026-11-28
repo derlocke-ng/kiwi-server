@@ -12,7 +12,7 @@ import hmac
 import os
 import time
 
-from . import facts, names as namesmod, remote, util
+from . import facts, names as namesmod, remote, unitsh, util
 from .util import KiwiError
 
 DIR = "/etc/kiwi-server/agent"
@@ -70,7 +70,7 @@ LAST_SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node when thi
                 "[Install]\nWantedBy=multi-user.target\n" % SCRIPT_PATH)
 TIMER = ("[Unit]\nDescription=kiwi-server: report to the control node every minute\n\n[Timer]\nOnBootSec=10s\nOnBootSec=45s\n"
          "OnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
-INSTALL = r'''set -eu
+INSTALL = "set -eu\n" + unitsh.PRELUDE + r'''
 install -d -m 0700 %(dir)s
 key=$(cat)
 umask 077
@@ -88,16 +88,16 @@ umask 022
 cat > %(path)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
 chmod 0755 %(path)s.new && mv %(path)s.new %(path)s
-cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
+kiwi_unit %(unit)s.service <<'KIWI_EOF'
 %(service)sKIWI_EOF
-cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
+kiwi_unit %(unit)s.timer <<'KIWI_EOF'
 %(timer)sKIWI_EOF
-cat > /etc/systemd/system/%(unit)s-last.service <<'KIWI_EOF'
+kiwi_unit %(unit)s-last.service <<'KIWI_EOF'
 %(last)sKIWI_EOF
-systemctl daemon-reload
-systemctl enable -q %(unit)s-last.service
+kiwi_reload
+kiwi_enable %(unit)s-last.service
 systemctl start %(unit)s-last.service
-systemctl enable -q %(unit)s.timer
+kiwi_enable %(unit)s.timer
 systemctl restart %(unit)s.timer
 systemctl start --no-block %(unit)s.service
 '''

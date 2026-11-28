@@ -55,7 +55,14 @@ t0 = time.time()
 for c in sleepers:
     took = wait(lambda: asleep(c), (longest + 3) * 60, every=15)
     if took is None:
-        say("FAILED: %s did not fall asleep within %d minutes" % (c, longest + 3))
+        # who kept it awake, or woke it again, as the sleep service's own log says it (2.320.0). A
+        # public server on a well-known port is knocked on by the Internet's scanners all day
+        _rc, out = mach.run("journalctl -u kn-games-sleep.service --since '-%d min' --no-pager -o cat | grep -F '%s: a player knocked' | tail -n 1"
+                            % (longest + 4, c), 30)
+        why = (" ".join(out) if isinstance(out, list) else str(out)).strip()
+        why = why[why.find("(the knock"):] if "(the knock" in why else ""
+        say("FAILED: %s did not fall asleep within %d minutes%s" % (c, longest + 3, ": it was woken again %s" % why if why else
+            " (no wake in its log: packets for its port kept coming, see docs/roles.md on public servers)"))
         bad += 1
     else:
         say("%s asleep after %d s of this drill" % (c, round(time.time() - t0)))

@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.parse
 
-from . import luks, remote, util
+from . import luks, remote, unitsh, util
 from .util import KiwiError
 
 DEBIAN_PACKAGES = "clevis clevis-luks clevis-initramfs"
@@ -285,19 +285,16 @@ for name in $(lsblk -rno NAME,FSTYPE | awk '$2 == "crypto_LUKS" { print $1 }'); 
 done
 exit 0
 '''
-INSTALL_RINGS_ANSWER = r'''
-set -eu
+INSTALL_RINGS_ANSWER = ("set -eu\n" + unitsh.PRELUDE + r'''
 install -d /usr/local/sbin
 cat > %(path)s.new
 chmod 0755 %(path)s.new
 mv %(path)s.new %(path)s
 for unit in kiwi-staged-reboot kiwi-reboot-if-required; do
-    d=/etc/systemd/system/$unit.service.d
-    mkdir -p $d
-    printf '[Service]\n# no restart for updates while the disk could not be opened again\nExecCondition=%(path)s\n' > $d/rings.conf
+    printf '[Service]\n# no restart for updates while the disk could not be opened again\nExecCondition=%(path)s\n' | kiwi_unit $unit.service.d/rings.conf
 done
-systemctl daemon-reload
-''' % {"path": RINGS_ANSWER_PATH}
+kiwi_reload
+''') % {"path": RINGS_ANSWER_PATH}
 
 # CoreOS: the same time limits for the unlock in its initramfs, and the hardware watchdog
 # there too (a machine that hangs before its disk is open is reset as well). Files under
@@ -949,13 +946,12 @@ logger -t kiwi-leash "the rings of this machine's site ($urls) have not answered
 mkdir -p /run/kiwi-server && echo "the leash: its site's rings did not answer for $minutes minutes" > /run/kiwi-server/going-down
 systemctl reboot
 '''
-INSTALL_LEASH = r'''
-set -eu
+INSTALL_LEASH = ("set -eu\n" + unitsh.PRELUDE + r'''
 install -d /usr/local/sbin
 cat > %(path)s.new
 chmod 0755 %(path)s.new
 mv %(path)s.new %(path)s
-cat > /etc/systemd/system/kiwi-leash.service <<'UNIT'
+kiwi_unit kiwi-leash.service <<'UNIT'
 [Unit]
 Description=kiwi-server: lock again when the rings of this site are gone (the leash)
 
@@ -963,7 +959,7 @@ Description=kiwi-server: lock again when the rings of this site are gone (the le
 Type=oneshot
 ExecStart=%(path)s
 UNIT
-cat > /etc/systemd/system/kiwi-leash.timer <<'UNIT'
+kiwi_unit kiwi-leash.timer <<'UNIT'
 [Unit]
 Description=kiwi-server: the leash, every minute
 
@@ -974,9 +970,9 @@ OnUnitActiveSec=1min
 [Install]
 WantedBy=timers.target
 UNIT
-systemctl daemon-reload
-systemctl enable -q --now kiwi-leash.timer
-''' % {"path": LEASH_PATH}
+kiwi_reload
+kiwi_enable --now kiwi-leash.timer
+''') % {"path": LEASH_PATH}
 REMOVE_LEASH = """
 if [ -f /etc/systemd/system/kiwi-leash.timer ]; then
     systemctl disable -q --now kiwi-leash.timer 2>/dev/null || true

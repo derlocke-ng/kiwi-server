@@ -72,6 +72,8 @@ L: days. New ideas go to the end of their section.
        unchanged files left; rings asked once per run; the boot system's SSH set-up leaves early.
        A full apply that changes nothing: quince 177 s to 28 s, papaya 90 s to about 50 s; a
        one-setting apply on quince 18 s. `KIWI_APPLY_TIMES=1` shows each call and each step.
+       And (2.321.0) systemd no longer reads its units again for nothing: 17 reloads per apply
+       became none (Rock Pi 67 s to 43 s, quince 29 s to 21 s, lychee 14 s to 10 s).
        Left: the disk-key tests on an encrypted machine (two calls, 4 s, slow by design) and
        about fifteen small calls after the role (3 s).
     b. A rollout by the control node. First step done (2.316.0): `apply --careful`, one machine

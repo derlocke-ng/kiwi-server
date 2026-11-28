@@ -4,7 +4,7 @@ boot system answers (Debian: port 2222, closed while the system runs) and, if so
 ring through an SSH tunnel with a key that can do nothing else there. Without it only the control
 node opens a master at a hoster: off after a power cut, the master stayed locked.
 """
-from . import remote, unlock, util
+from . import remote, unitsh, unlock, util
 from .util import KiwiError
 
 DIR = "/etc/kiwi-server/opener"
@@ -28,7 +28,7 @@ done < "$d/targets"
 '''
 SERVICE = "[Unit]\nDescription=kiwi-server: open the way for a machine that waits for a ring of this one\n\n[Service]\nType=oneshot\nExecStart=%s\n" % SCRIPT_PATH
 TIMER = "[Unit]\nDescription=kiwi-server: look every minute for a machine that waits for a ring of this one\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=10s\n\n[Install]\nWantedBy=timers.target\n"
-INSTALL = r'''set -eu
+INSTALL = "set -eu\n" + unitsh.PRELUDE + r'''
 install -d -m 0700 %(dir)s
 key=$(cat)
 umask 077
@@ -41,15 +41,17 @@ umask 022
 cat > %(path)s.new <<'KIWI_EOF'
 %(script)sKIWI_EOF
 chmod 0755 %(path)s.new && mv %(path)s.new %(path)s
-cat > /etc/systemd/system/%(unit)s.service <<'KIWI_EOF'
+kiwi_unit %(unit)s.service <<'KIWI_EOF'
 %(service)sKIWI_EOF
-cat > /etc/systemd/system/%(unit)s.timer <<'KIWI_EOF'
+kiwi_unit %(unit)s.timer <<'KIWI_EOF'
 %(timer)sKIWI_EOF
-systemctl daemon-reload
-systemctl enable --now -q %(unit)s.timer
+kiwi_reload
+kiwi_enable --now %(unit)s.timer
 '''
-REMOVE = ("systemctl disable --now -q %s.timer 2>/dev/null || true; rm -rf %s %s /etc/systemd/system/%s.service "
-          "/etc/systemd/system/%s.timer; systemctl daemon-reload" % (UNIT, DIR, SCRIPT_PATH, UNIT, UNIT))
+# (nothing of it there: nothing to do. `systemctl disable` makes systemd read all its units again even then)
+REMOVE = ("[ -e /etc/systemd/system/%s.timer ] || [ -e %s ] || [ -e %s ] || exit 0; "
+          "systemctl disable --now -q %s.timer 2>/dev/null || true; rm -rf %s %s /etc/systemd/system/%s.service "
+          "/etc/systemd/system/%s.timer; systemctl daemon-reload" % (UNIT, DIR, SCRIPT_PATH, UNIT, DIR, SCRIPT_PATH, UNIT, UNIT))
 
 
 def jobs(host, servers):

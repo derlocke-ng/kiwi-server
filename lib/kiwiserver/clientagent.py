@@ -75,7 +75,13 @@ if [ "${1:-}" = bind ]; then
     [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 bind" >&2; exit 2; }
     [ -s "$st/unlock.json" ] || { echo "this computer's profile has no disk policy: the network's settings give it one (unlock: rings: under its name in clients:); then wait a minute and run this again" >&2; exit 2; }
     dev=$(luks); [ -n "$dev" ] || { echo "no encrypted disk here: nothing to bind" >&2; exit 2; }
-    if command -v rpm-ostree >/dev/null 2>&1; then
+    if command -v rpm-ostree >/dev/null 2>&1 && command -v clevis >/dev/null 2>&1 \
+        && { lsinitrd -m 2>/dev/null; lsinitrd -m "/usr/lib/modules/$(uname -r)/initramfs.img" 2>/dev/null; } | grep -qx clevis; then
+        # an image with clevis in its boot system (phoenix-desktop): nothing to layer, no local boot system
+        echo "clevis is in the system image and its boot system already"
+        grep -qw rd.neednet=1 /proc/cmdline || { rpm-ostree kargs --append-if-missing=rd.neednet=1 --append-if-missing=ip=dhcp >/dev/null || exit 1
+            echo "the network at boot counts from the next start"; }
+    elif command -v rpm-ostree >/dev/null 2>&1; then
         echo "clevis into the system image and its boot system, and the network at boot (rpm-ostree)"
         rpm-ostree install -y --idempotent clevis clevis-luks clevis-dracut >/dev/null || exit 1
         rpm-ostree initramfs --enable --arg=-a --arg=clevis --arg=-a --arg=clevis-pin-tang --arg=-a --arg=clevis-pin-sss >/dev/null || exit 1

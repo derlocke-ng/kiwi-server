@@ -17,6 +17,10 @@ SYSTEMS = {
     "silverblue": "quay.io/fedora/fedora-silverblue:45",
     "bluefin": "ghcr.io/ublue-os/bluefin:stable",
     "bluefin-dx": "ghcr.io/ublue-os/bluefin-dx:stable",
+    # Bluefin with clevis in its boot system (github.com/derlocke-ng/phoenix-desktop): the disk can
+    # open by the network's rings without a local boot system; it switches itself to its signed origin
+    "phoenix": "ghcr.io/derlocke-ng/phoenix-desktop:stable",
+    "phoenix-dx": "ghcr.io/derlocke-ng/phoenix-desktop-dx:stable",
 }
 
 JOIN_SCRIPT = """#!/bin/sh

@@ -488,7 +488,9 @@ clients:
 ```
 
 **A new computer from a stick:** `kiwi-server client iso` makes install media that installs
-Silverblue, Bluefin or Bluefin-DX and joins the network at the computer's first start:
+Silverblue, Bluefin, Bluefin-DX or Phoenix Desktop (`phoenix`, `phoenix-dx`: Bluefin with clevis in its
+boot system, [phoenix-desktop](https://github.com/derlocke-ng/phoenix-desktop)) and joins the network at
+the computer's first start:
 
 ```bash
 kiwi-server client add fleet.yaml laptop-anna --vpn
@@ -536,8 +538,8 @@ passphrase on the stick: for test machines only.
 
 **Its disk:** a client with `unlock:` (`rings`, `threshold`, `switch`, as a machine's) gets the
 rings' policy in its profile. Binding the disk needs its passphrase once: `sudo kiwi-client-agent
-bind` at the computer installs clevis and its boot-system part, gives the boot system the network,
-and asks for the passphrase. From then on the agent keeps the binding as the network says (other
+bind` at the computer installs clevis and its boot-system part (Phoenix Desktop has them already),
+gives the boot system the network, and asks for the passphrase. From then on the agent keeps the binding as the network says (other
 rings, new keys) without the passphrase, and unbinds it when `unlock:` goes. The passphrase
 always opens the disk too. Switching a computer's auto-unlock on the page, as a machine's: not built yet.
 

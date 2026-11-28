@@ -7418,7 +7418,8 @@ def build_parser():
     s.add_argument("--managed", action="store_true", help="add: a company's computer: its people log in with the network's "
                                                          "accounts, without admin rights (docs/design/clients.md)")
     s.add_argument("--group", help="add --vpn: the VPN group, which decides what it may reach (a pentest system: one of its own)")
-    s.add_argument("--system", choices=["silverblue", "bluefin", "bluefin-dx"], help="iso: what is installed (bluefin)")
+    s.add_argument("--system", choices=["silverblue", "bluefin", "bluefin-dx", "phoenix", "phoenix-dx"],
+                   help="iso: what is installed (bluefin; phoenix: Bluefin with clevis, its disk opens by the rings)")
     s.add_argument("--container", metavar="IMAGE", help="iso: another bootc image to install, like ghcr.io/ublue-os/aurora:stable")
     s.add_argument("--base", metavar="ISO", help="iso: the Fedora installer it is made from")
     s.add_argument("--output", metavar="ISO", help="iso: where it goes (NAME-SYSTEM.iso)")

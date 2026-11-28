@@ -51,6 +51,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     echo "updates $(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ')"
 fi
 [ -s /var/lib/kiwi-client/profile.sum ] && echo "profile $(cut -c1-12 /var/lib/kiwi-client/profile.sum)"
+[ -s /var/lib/kiwi-client/kind ] && echo "kind $(cat /var/lib/kiwi-client/kind)"
 if [ -s /var/lib/kiwi-client/unlock.json ]; then [ -s /var/lib/kiwi-client/unlock.slot ] && echo "unlock bound" || echo "unlock waits"; fi
 echo "agent %(version)s"
 '''
@@ -288,7 +289,8 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         fi
     fi
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
-    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then managed "$p"; software "$p"; desktop "$p"; fi
+    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then echo managed > "$st/kind"; managed "$p"; software "$p"; desktop "$p"
+    else rm -f "$st/kind"; fi
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -522,7 +524,7 @@ def parse(text):
             out["vpn"].append({"link": link[:32], "address": addr[:64]})
         elif k in ("uptime", "crypt", "clevis") and v.isdigit():
             out[k] = int(v)
-        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile", "unlock"):
+        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile", "unlock", "kind"):
             out[k] = v[:200]
     return out
 

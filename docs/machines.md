@@ -444,8 +444,9 @@ report. `client remove` takes a client out of the fleet file and off the VPN.
 **A computer leaves:** `sudo kiwi-client-agent leave` on it takes away what the agent put there:
 its VPN connection, the network's CA, its disk's binding to the rings, and the agent itself.
 
-**The app on the computer:** *Kiwi Network* (`kiwi-desktop`, installed with kiwi-server's app)
-shows what the agent says: whether the network hears from the computer, its VPN connection (with
+**The app on the computer:** *Kiwi Agent* ([kiwi-agent](https://github.com/derlocke-ng/kiwi-agent),
+installed with kiwi-updater: `kiwi add https://github.com/derlocke-ng/kiwi-agent.git`, then
+`kiwi install kiwi-agent`) shows what the agent says: whether the network hears from the computer, its VPN connection (with
 a switch), its disk, its updates. Its buttons do what the commands above do, as root through
 polkit: *Join a network…* (paste the command from the page), *Bind…* (the disk's passphrase),
 *Update now*, *Leave…*. The agent writes what the app shows into `/run/kiwi-client/status`,

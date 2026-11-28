@@ -61,7 +61,9 @@ def image(system, override=None):
 
 def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en_US.UTF-8", passphrase=None,
               managed=False):
-    """The kickstart: the image onto an encrypted btrfs disk (every disk of the computer is wiped),
+    """The kickstart, for the text installer (Fedora 45's web installer stops at its review page
+    instead of running a kickstart through, 28 Nov 2026; the text one asks for the passphrase on
+    the screen when it is not given): the image onto an encrypted btrfs disk (every disk of the computer is wiped),
     the network by DHCP, no user (GNOME's first start asks for one: its person is its admin; a
     managed computer has none, its people log in with the network's accounts), and the join at the
     first start."""
@@ -78,7 +80,7 @@ def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en
             raise KiwiError("the passphrase from --passphrase-file is empty or has a quote or a line break")
         secret = " --passphrase=%s" % shlex.quote(passphrase)
     return """# kiwi-server: install media for %(name)s%(kind)s
-graphical
+text
 lang %(lang)s
 keyboard --vckeymap=%(keymap)s
 timezone %(timezone)s --utc

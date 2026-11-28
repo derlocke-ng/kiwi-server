@@ -642,10 +642,10 @@ def orders_api(fleet_dir, host=None, key=None):
     return out.get("orders") or []
 
 
-def client_invite_api(fleet_dir, name, key=None):
-    """A computer's one-time join command, from the control node."""
+def client_invite_api(fleet_dir, name, key=None, hours=None):
+    """A computer's one-time join command, from the control node; `hours` it stays valid (a day)."""
     api, _key = api_for(fleet_dir, key)
-    status, out = api.call("POST", "/api/client/invite", {"name": name})
+    status, out = api.call("POST", "/api/client/invite", dict({"name": name}, **({"hours": hours} if hours else {})))
     if status == 404:
         raise KiwiError("the control node is too old to make join commands: update it (kiwi-server apply <fleet> <its machine> --update)")
     if status != 200 or not isinstance(out, dict):

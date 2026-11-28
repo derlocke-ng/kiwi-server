@@ -3410,7 +3410,11 @@ def make_app(control: Control):
             body = None
         name = str((body or {}).get("name") or "") if isinstance(body, dict) else ""
         try:
-            return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api")}
+            hours = int((body or {}).get("hours") or 0) if isinstance(body, dict) else 0
+        except (TypeError, ValueError):
+            hours = 0
+        try:
+            return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api", hours=hours or None)}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 

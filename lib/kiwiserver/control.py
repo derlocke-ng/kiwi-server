@@ -2458,9 +2458,10 @@ class Control:
     def _invites_path(self):
         return os.path.join(self.run, "client-invites.json")
 
-    def client_invite(self, name, user="admin"):
-        """The command a person runs on the computer, once, within a day: it fetches the agent with
-        its key from this page, checked against the network's CA, which the command carries."""
+    def client_invite(self, name, user="admin", hours=None):
+        """The command a person runs on the computer, once, within a day (`hours`: up to two weeks,
+        for install media that lies around a while): it fetches the agent with its key from this
+        page, checked against the network's CA, which the command carries."""
         import base64
         from . import clientagent, config, machineagent
         if name not in self._client_keys():
@@ -2478,9 +2479,10 @@ class Control:
                 held = {}
             now = int(self.clock())
             held = {k: v for k, v in held.items() if v.get("until", 0) > now and v.get("name") != name}
-            held[hashlib.sha256(code.encode()).hexdigest()] = {"name": name, "until": now + self.INVITE_HOURS * 3600}
+            hours = max(1, min(int(hours or self.INVITE_HOURS), 14 * 24))
+            held[hashlib.sha256(code.encode()).hexdigest()] = {"name": name, "until": now + hours * 3600}
             util.write_text(self._invites_path(), json.dumps(held) + "\n", 0o600)
-        self.audit(user, "made the join command of the computer %s (one use, %d hours)" % (name, self.INVITE_HOURS))
+        self.audit(user, "made the join command of the computer %s (one use, %d hours)" % (name, hours))
         return clientagent.join_command(url, code, base64.b64encode(util.read_bytes(ca)).decode())
 
     def client_join(self, code):

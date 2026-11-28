@@ -428,3 +428,7 @@ yours to change. It refuses the last master of other machines and the last machi
 a network.
 
 The machine itself is not touched. It still has what it had: wipe it, or switch it off.
+What the network kept for it is set aside in the secret store, not deleted: the passwords of its
+services (`secrets/pins.json`, under `removed/<day>/`) and its disk's keys
+(`secrets/luks/removed/<day>/`). The disk still opens with that key until it is wiped. A machine
+added later under the same name makes its own.

@@ -106,6 +106,21 @@ def _path(fleet, name, kind):
     return fleet.resolve_path("secrets/luks/%s.%s" % (name, kind))
 
 
+def set_aside(fleet, name, day):
+    """A machine leaves the fleet (`kiwi-server remove`): what is kept of its disk's keys goes to
+    secrets/luks/removed/DAY/, not away. The disk is not wiped and still opens with that key; a
+    machine added later under the same name makes its own. The names of the files moved."""
+    d = fleet.resolve_path("secrets/luks")
+    mine = sorted(f for f in (os.listdir(d) if os.path.isdir(d) else [])
+                  if re.fullmatch(re.escape(name) + r"\.[a-z]+", f) and os.path.isfile(os.path.join(d, f)))
+    if mine:
+        aside = os.path.join(d, "removed", day)
+        os.makedirs(aside, mode=0o700, exist_ok=True)
+        for f in mine:
+            os.replace(os.path.join(d, f), os.path.join(aside, f))
+    return mine
+
+
 def _read(path):
     return util.read_bytes(path).decode().strip() if os.path.isfile(path) else ""
 

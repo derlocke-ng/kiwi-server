@@ -1389,17 +1389,26 @@ def cmd_remove(args):
     # A machine added later under the same name would otherwise take them over; the machine removed
     # may still run with them (it is not wiped here), so they stay in the store under removed/
     pins_path = fleet.resolve_path("secrets/pins.json")
+    day = time.strftime("%Y-%m-%d")
+    aside = False
     if os.path.isfile(pins_path):
         pins = json.loads(util.read_text(pins_path))
         mine = [k for k in pins if k.startswith(h.hostname + "/")]
         if mine:
-            day = time.strftime("%Y-%m-%d")
             for k in mine:
                 pins["removed/%s/%s" % (day, k)] = pins.pop(k)
             util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
-            store.Store.for_fleet(fleet.path).sync()            # into secrets.age at once
+            aside = True
             util.say("%d kept secret(s) of %s set aside in the store (secrets/pins.json, removed/%s/…): a machine added "
                      "later under its name does not take them over" % (len(mine), name, day))
+    # and its disk's keys, the same way (until 2.328.1 they stayed, and a new machine of that name took them)
+    moved = luks.set_aside(fleet, name, day)
+    if moved:
+        aside = True
+        util.say("its disk's keys set aside in the store (secrets/luks/removed/%s/: %s): the disk still opens with "
+                 "them until it is wiped" % (day, ", ".join(moved)))
+    if aside:
+        store.Store.for_fleet(fleet.path).sync()                # into secrets.age at once
     def forget(state):
         for key in ("applied", "backup_clients", "rendered", "rendered_system", "hold", "hold_parts", "off", "installed_media"):
             (state.get(key) or {}).pop(name, None)

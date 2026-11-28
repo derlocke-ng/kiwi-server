@@ -7997,8 +7997,15 @@ class TestManage(Base):
         # its kept secrets, and another machine's
         pins = os.path.join(self.tmp, "secrets", "pins.json")
         write(pins, json.dumps({"sh3.kiwi/cloud/admin_password": "kept", "gate.kiwi/dns/pihole_password": "other"}))
+        luksd = os.path.join(self.tmp, "secrets", "luks")
+        for n in ("sh3.key", "sh3.opens", "sh3x.key", "gate.key"):
+            write(os.path.join(luksd, n), "k-" + n)
         rc, out, err = self.run_cli("remove", f.path, "sh3", "--yes", "--api", api.url)
         self.assertEqual(rc, 0, err)
+        day = time.strftime("%Y-%m-%d")
+        self.assertEqual(sorted(os.listdir(luksd)), ["gate.key", "removed", "sh3x.key"])     # a new sh3 makes its own
+        self.assertEqual(util.read_text(os.path.join(luksd, "removed", day, "sh3.key")), "k-sh3.key")  # set aside, not lost
+        self.assertIn("its disk's keys set aside", out + err)
         kept = json.loads(util.read_text(pins))
         self.assertNotIn("sh3.kiwi/cloud/admin_password", kept)          # a new sh3 does not take it over
         self.assertEqual([v for k, v in kept.items() if k.startswith("removed/") and k.endswith("/sh3.kiwi/cloud/admin_password")],

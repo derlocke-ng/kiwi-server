@@ -377,9 +377,10 @@ class TestClientProfileAndOrders(unittest.TestCase):
                  ("quince", ["gateway"], "192.168.2.62", ""), ("sorbet", ["vpn-server"], "", ""), ("medlar", ["gateway"], "192.168.2.63", "")]
         macs = {"papaya": "AA:00:00:00:00:30", "lime": "aa:00:00:00:00:64", "quince": "aa:00:00:00:00:62", "medlar": "nonsense"}
         got = clientagent.gateways_of(hosts, macs.get)
-        self.assertEqual(got[-1], {"name": "the moving address 192.168.2.69", "ip": "192.168.2.69",
+        self.assertEqual(got[-1], {"name": "lime or papaya", "ip": "192.168.2.69",
                                    "macs": ["aa:00:00:00:00:30", "aa:00:00:00:00:64"]})
-        self.assertIn({"name": "quince's gateway", "ip": "192.168.2.62", "macs": ["aa:00:00:00:00:62"]}, got)
+        self.assertIn({"name": "quince", "ip": "192.168.2.62", "macs": ["aa:00:00:00:00:62"]}, got)
+        self.assertFalse(any(set(g["name"]) & set("'<>&`") for g in got))      # kiwi-killswitch refuses those
         self.assertNotIn("medlar", str(got))                               # no MAC known: not trusted
 
     def test_the_agent_writes_the_kill_switchs_policy_and_leaves_it_the_routing(self):

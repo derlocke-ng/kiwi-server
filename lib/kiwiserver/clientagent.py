@@ -685,18 +685,22 @@ def killswitch_policy(network, conn, block, conf_text, gateways, domains):
 def gateways_of(hosts, mac_of):
     """The network's gateways for a client's kill switch: each machine with the gateway module at its
     fixed LAN address, and each moving address with the MACs of every machine that may hold it.
-    `hosts`: [(name, modules, lan address, vip address)]; `mac_of(name)`: its last reported MAC."""
+    `hosts`: [(name, modules, lan address, vip address)]; `mac_of(name)`: its last reported MAC.
+    Each is named after the machines that act (kiwi-killswitch shows the name; it takes no quotes
+    or apostrophes, at most 64 characters)."""
     out, moving = [], {}
     for name, modules, lan, vip in hosts:
         mac = (mac_of(name) or "").lower()
         if not MAC.match(mac):
             continue
         if "gateway" in modules and lan:
-            out.append({"name": "%s's gateway" % name, "ip": lan, "macs": [mac]})
+            out.append({"name": name, "ip": lan, "macs": [mac]})
         if "vip" in modules and vip:
-            moving.setdefault(vip, []).append(mac)
-    for ip, macs in sorted(moving.items()):
-        out.append({"name": "the moving address %s" % ip, "ip": ip, "macs": sorted(set(macs))})
+            moving.setdefault(vip, []).append((name, mac))
+    for ip, held in sorted(moving.items()):
+        who = " or ".join(sorted({n for n, _m in held}))
+        out.append({"name": who if len(who) <= 64 else "the moving address %s" % ip, "ip": ip,
+                    "macs": sorted({m for _n, m in held})})
     return out
 
 

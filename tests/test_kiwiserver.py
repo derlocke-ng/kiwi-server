@@ -17475,11 +17475,11 @@ class TestLocalAI(unittest.TestCase):
     GEMMA = "ggml-org/gemma-3-4b-it-GGUF:Q4_K_M"
     QWEN8 = "unsloth/Qwen3-8B-GGUF:Q4_K_M"
 
-    def llama(self, own_context=40960):
+    def llama(self, own_context=40960, state=None, aliases=None):
         """llama.cpp's server alone as it answered on 27 Nov 2026 (several-models mode): a model is one
         name with its quant in it; it is loaded, sleeping or unloaded; one is in memory at a time, and
-        the request that names a model loads it."""
-        case = self
+        the request that names a model loads it. `aliases`: other names a model answers to."""
+        case, aliases = self, aliases or {}
 
         class Answer:
             def __init__(self, lines=(), body=None):
@@ -17499,16 +17499,18 @@ class TestLocalAI(unittest.TestCase):
 
         class Llama:
             def __init__(self):
-                self.state, self.calls = {case.GEMMA: "unloaded", case.QWEN8: "unloaded"}, []
+                self.state, self.calls = dict(state or {case.GEMMA: "unloaded", case.QWEN8: "unloaded"}), []
 
             def load(self, name):
+                name = next((n for n, a in aliases.items() if name in a), name)
                 case.assertIn(name, self.state)
                 self.state = {n: "loaded" if n == name else "unloaded" for n in self.state}
 
             def __call__(self, fleet, host, path, body=None, timeout=300):
                 self.calls.append((path, body))
                 if path == "/v1/models":
-                    return Answer(body={"object": "list", "data": [{"id": n, "status": {"value": v}} for n, v in self.state.items()]})
+                    return Answer(body={"object": "list", "data": [{"id": n, "aliases": aliases.get(n, []), "status": {"value": v}}
+                                                                   for n, v in self.state.items()]})
                 if path == "/models/load":
                     self.load(body["model"])
                     return Answer(body={"success": True})
@@ -17562,6 +17564,33 @@ class TestLocalAI(unittest.TestCase):
             block = ai.opencode_block(h, now["model"], now["quant"], 8192, "/home/me/.config/kiwi/desk-ai.key")
             self.assertEqual(block["model"], "kiwi-desk/" + self.GEMMA)
             self.assertEqual(block["provider"]["kiwi-desk"]["models"][self.GEMMA]["limit"], {"context": 8192, "output": 2048})
+
+    def test_llama_cpp_lists_a_quant_by_the_end_of_its_name_and_the_fleets_model_is_found(self):
+        """llama.cpp lists a model the fleet names user/model:UD-Q4_K_S as user/model:Q4_K_S (and q8_0 as
+        Q8_0). On lemonaide (28 Nov 2026) the fleet's model was not found in the list, and the first
+        one in it was loaded: an audio model, from the folder Studio shares. With the alias the ai
+        module gives it (kiwi-modules 0.142.0) or without, the fleet's model is the one loaded."""
+        from kiwiserver import ai
+        self.assertEqual(ai.lean_id(self.TIEL + ":UD-Q4_K_S"), self.TIEL + ":Q4_K_S")
+        self.assertEqual(ai.lean_id("ggml-org/Qwen3-0.6B-GGUF:q8_0"), "ggml-org/Qwen3-0.6B-GGUF:Q8_0")
+        self.assertEqual(ai.lean_id(self.GEMMA), self.GEMMA)
+        self.assertEqual(ai.lean_id("unsloth/Qwen3-8B-GGUF"), "unsloth/Qwen3-8B-GGUF")     # no quant: as it is
+        self.assertEqual(ai.lean_id("a/b:Q4-"), "a/b:Q4-")                                  # nothing after the dash
+        audio, tiel = "ggml-org/Voxtral-Mini-3B-2507-GGUF:Q4_K_M", self.TIEL + ":Q4_K_S"
+        for aliases in ({}, {tiel: [self.TIEL + ":UD-Q4_K_S"]}):
+            tmp = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, tmp, True)
+            fleet, h = self.host_and_fleet(tmp)
+            h.module_settings = {"ai": {"engine": "llama", "api_key": "key-from-the-seed-0123456789", "context": 65536,
+                                        "models": [self.TIEL + ":UD-Q4_K_S"]}}
+            server = self.llama(state={audio: "unloaded", tiel: "unloaded"}, aliases=aliases)
+            with mock.patch.object(ai, "_call", server), mock.patch.object(ai.time, "sleep", lambda s: None):
+                self.assertEqual([e["aliases"] for e in ai.models(fleet, h)], [[], aliases.get(tiel, [])])
+                self.assertEqual(ai.ready(fleet, h, say=lambda *a: None)["model"], tiel, aliases)   # not the list's first
+                self.assertEqual(server.state, {audio: "unloaded", tiel: "loaded"})
+                server.load(audio)
+                self.assertEqual(ai.ready(fleet, h, self.TIEL, "UD-Q4_K_S", say=lambda *a: None)["model"], tiel)  # named so
+                self.assertEqual(server.state[tiel], "loaded")
 
     def studio(self, loaded=None, answers=None, give=None):
         """Studio as it answered on 25 Nov 2026: a model with several quants is listed as its id and

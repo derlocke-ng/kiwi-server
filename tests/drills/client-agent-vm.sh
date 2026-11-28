@@ -69,6 +69,7 @@ key=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import clientagent, config
 print(clientagent.key(config.Fleet.load(sys.argv[1]), sys.argv[2]), end="")' "$fleet" "$name")
+installed=$(date +%s)
 printf '%s' "$key" | vssh "sudo sh -c $(printf '%q' "$script")"; check $? "the agent is put on the VM"
 vssh "sudo stat -c '%a %U' /etc/kiwi-client/key" | grep -qx "600 root"; check $? "its key is root's alone"
 
@@ -77,8 +78,8 @@ while [ "$n" -gt 0 ]; do
     row=$("$KIWI" client list "$fleet" --porcelain 2>/dev/null | python3 -c '
 import json, sys
 r = next((x for x in json.load(sys.stdin)["clients"] if x["name"] == sys.argv[1]), None)
-if r and r["state"] == "on":
-    f = r["facts"]; print("%s|%s|%s|%s|%s" % (f.get("os", ""), f.get("box", ""), f.get("crypt", ""), f.get("clevis", ""), f.get("agent", "")))' "$name")
+if r and r["state"] == "on" and (r.get("seen") or 0) >= int(sys.argv[2]) - 2:      # a report of this run, not one kept from before
+    f = r["facts"]; print("%s|%s|%s|%s|%s" % (f.get("os", ""), f.get("box", ""), f.get("crypt", ""), f.get("clevis", ""), f.get("agent", "")))' "$name" "$installed")
     [ -n "$row" ] && break; sleep 5; n=$((n - 1))
 done
 [ -n "$row" ]; check $? "the control node lists $name as on, within two minutes"
@@ -90,10 +91,13 @@ IFS='|' read -r os box crypt clevis agent <<<"$row"
 case $os in *Debian*) true ;; *) false ;; esac; check $? "its system: ${os:-?}"
 [ ${#box} = 16 ]; check $? "the box it runs on, as a salted sum: ${box:-none}"
 [ "${crypt:-0}" -ge 1 ] && [ "${clevis:-0}" -ge 1 ]; check $? "its disk: ${crypt:-?} encrypted, ${clevis:-?} bound to rings"
-vssh "sudo journalctl -t kiwi-client-agent --no-pager -o cat | grep -q 'report to $url: 200'"; check $? "the VM's journal says the control node took it"
+said() { vssh "sudo journalctl -t kiwi-client-agent --since '-10 min' --no-pager -o cat" 2>/dev/null; }
+said | grep -q "report to $url: 200"; rc=$?; check $rc "the VM's journal says the control node took it"
+[ $rc = 0 ] || said | tail -n 5 | sed 's/^/          /' | cut -c1-200
 
 vssh "sudo sh -c 'cp /etc/kiwi-client/key /run/kiwi-key.keep; printf other > /etc/kiwi-client/key; rm -f /run/kiwi-client-agent.last; /usr/local/sbin/kiwi-client-agent; cp /run/kiwi-key.keep /etc/kiwi-client/key; rm -f /run/kiwi-key.keep'"
-vssh "sudo journalctl -t kiwi-client-agent --since '-2 min' --no-pager -o cat | grep -q 'report to $url: 403'"; check $? "a report signed with another key is refused (403)"
+said | grep -q "report to $url: 403 .*not this client"; rc=$?; check $rc "a report signed with another key is refused (403, not this client's)"
+[ $rc = 0 ] || said | tail -n 5 | sed 's/^/          /' | cut -c1-200
 
 "$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file again"
 vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")"

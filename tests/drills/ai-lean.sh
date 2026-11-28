@@ -54,9 +54,10 @@ def code(path, headers=None):
         return str(e)
 
 
-def status():
+def status():     # by every name a model answers to: its id and its aliases (the fleet's name, see ai.lean_id)
     with ai._call(fleet, h, "/v1/models", timeout=20) as r:
-        return {x["id"]: (x.get("status") or {}).get("value") for x in json.load(r)["data"]}
+        return {n: (x.get("status") or {}).get("value") for x in json.load(r)["data"]
+                for n in [x["id"]] + list(x.get("aliases") or [])}
 
 
 check(code("/", {"Accept-Encoding": "gzip"}) == 200, "its chat page opens (https://%s)" % name)

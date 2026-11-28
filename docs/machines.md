@@ -411,6 +411,31 @@ desktop app show the same list and keep a password hidden until you ask for
 it: see [The control node](control.md#logins) and
 [The desktop app](gui.md#a-host).
 
+## People's computers
+
+A person's computer (a desktop, a laptop, a pentest system on a portable SSD) can be a client of
+the network: listed in the fleet file, with an agent on it that tells the control node how it is,
+once a minute. A client is the installed system, not the box. The same SSD booted on two machines
+is one client on two boxes. What comes next is in the [design](design/clients.md).
+
+```bash
+kiwi-server client add fleet.yaml desk
+kiwi-server control push fleet.yaml
+kiwi-server client install fleet.yaml desk --here
+kiwi-server client list fleet.yaml
+```
+
+`add` writes `clients: {desk: {}}` into the fleet file. `install --here` puts the agent on this
+computer (`sudo` asks for your password); `--ssh USER@ADDRESS` puts it on another one. The
+agent reports to the control node, signed with a key of the client's own. Its report says which
+box it runs on (a sum of the board's id, salted for this network), its system, its VPN links,
+whether its disk is encrypted and bound to rings, and its pending updates. `list` shows the
+clients with their last report. `remove` takes a client out of the fleet file, and with `--ssh`
+its agent off the computer.
+
+This is the first step: the agent reports. It takes no orders yet and changes nothing on the
+computer.
+
 ## Remove a machine
 
 ```bash
@@ -428,3 +453,7 @@ yours to change. It refuses the last master of other machines and the last machi
 a network.
 
 The machine itself is not touched. It still has what it had: wipe it, or switch it off.
+What the network kept for it is set aside in the secret store, not deleted: the passwords of its
+services (`secrets/pins.json`, under `removed/<day>/`) and its disk's keys
+(`secrets/luks/removed/<day>/`). The disk still opens with that key until it is wiped. A machine
+added later under the same name makes its own.

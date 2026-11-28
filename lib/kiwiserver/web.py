@@ -3325,6 +3325,34 @@ def make_app(control: Control):
             return PlainTextResponse("".join(line + "\n" for line in control.answer(h.get("x-kiwi-host") or "", body)))
         return JSONResponse({"ok": True})
 
+    @app.post("/api/client-report")
+    async def client_report(request: Request):
+        """A person's computer says how it is (clientagent.py). No login: signed with the client's
+        own key, which only the seed gives."""
+        from . import clientagent
+        try:
+            size = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            size = 0
+        if size > clientagent.LIMIT:
+            return JSONResponse({"error": "too big"}, status_code=413)
+        body = await request.body()
+        h = request.headers
+        why = control.client_report(h.get("x-kiwi-client") or "", h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "", body)
+        if why:
+            return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/clients")
+    def api_clients(request: Request):
+        """The network's clients (people's computers) and their last reports."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        try:
+            return {"clients": control.clients()}
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     @app.post("/api/orders")
     async def api_order(request: Request):
         """An order for a machine's agent, for a computer that manages the network (its key's

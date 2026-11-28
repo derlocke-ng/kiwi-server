@@ -71,6 +71,11 @@ nginx:
       # (a report is bigger than nginx's 16k: each one went through a file on the disk, with a
       # warning in the log, three a minute)
       config: "allow all; client_body_buffer_size 256k;"
+    # a person's computer says how it is (kiwi-server's clientagent.py), signed with its own key: from
+    # any VPN group it is in, also one without the admin pages (a pentest system)
+    - path: "= /api/client-report"
+      proxy: true
+      config: "allow all;"
   servers:
     # the status page: how the network is, for everyone on it, without a login. Whatever is asked
     # for at this name, the control part is asked for /status and nothing else. It is no admin

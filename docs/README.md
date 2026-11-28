@@ -38,6 +38,7 @@ then sets up and maintains each machine over SSH. Its command is
 | [Federation](design/federation.md) | two networks sharing services |
 | [Groups of the home network](design/lans.md) | a subnet or VLAN at home given what it may reach |
 | [Recovery](design/recovery.md) | what runs by itself when something breaks, and what is planned |
+| [People's computers as clients](design/clients.md) | desktops, laptops and pentest systems known and kept by the network (designed) |
 | [Hidden services](design/onion.md) | services for strangers over Tor, never through a home connection |
 | [The starter image](design/starter.md) | a network from a phone: one image, the rest in a browser |
 | [A network without a master](design/no-master.md) | one machine at home first, a master later |

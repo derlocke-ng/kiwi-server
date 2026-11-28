@@ -642,6 +642,17 @@ def orders_api(fleet_dir, host=None, key=None):
     return out.get("orders") or []
 
 
+def clients_api(fleet_dir, key=None):
+    """The network's clients and their last reports (docs/design/clients.md)."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/clients")
+    if status == 404:
+        raise KiwiError("the control node is too old to know clients: update it (kiwi-server apply <fleet> <its machine> --update)")
+    if status != 200 or not isinstance(out, dict):
+        raise KiwiError("the control node did not say (%s)" % status)
+    return out.get("clients") or []
+
+
 def activity_api(fleet_dir, key=None):
     """The control node's Activity: {jobs, entries}."""
     api, _key = api_for(fleet_dir, key)

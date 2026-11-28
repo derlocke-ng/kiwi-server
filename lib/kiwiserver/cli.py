@@ -1389,17 +1389,26 @@ def cmd_remove(args):
     # A machine added later under the same name would otherwise take them over; the machine removed
     # may still run with them (it is not wiped here), so they stay in the store under removed/
     pins_path = fleet.resolve_path("secrets/pins.json")
+    day = time.strftime("%Y-%m-%d")
+    aside = False
     if os.path.isfile(pins_path):
         pins = json.loads(util.read_text(pins_path))
         mine = [k for k in pins if k.startswith(h.hostname + "/")]
         if mine:
-            day = time.strftime("%Y-%m-%d")
             for k in mine:
                 pins["removed/%s/%s" % (day, k)] = pins.pop(k)
             util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
-            store.Store.for_fleet(fleet.path).sync()            # into secrets.age at once
+            aside = True
             util.say("%d kept secret(s) of %s set aside in the store (secrets/pins.json, removed/%s/…): a machine added "
                      "later under its name does not take them over" % (len(mine), name, day))
+    # and its disk's keys, the same way (until 2.328.1 they stayed, and a new machine of that name took them)
+    moved = luks.set_aside(fleet, name, day)
+    if moved:
+        aside = True
+        util.say("its disk's keys set aside in the store (secrets/luks/removed/%s/: %s): the disk still opens with "
+                 "them until it is wiped" % (day, ", ".join(moved)))
+    if aside:
+        store.Store.for_fleet(fleet.path).sync()                # into secrets.age at once
     def forget(state):
         for key in ("applied", "backup_clients", "rendered", "rendered_system", "hold", "hold_parts", "off", "installed_media"):
             (state.get(key) or {}).pop(name, None)
@@ -4852,6 +4861,87 @@ def cmd_enroll(args):
         print(qrmod.text_blocks(text))
 
 
+def cmd_client(args):
+    """People's computers as clients (docs/design/clients.md): listed in the fleet file, each with an
+    agent that reports to the control node."""
+    import yaml
+    from . import clientagent
+    fleet, _roles, ms = load(args, need_roles=False)
+    have = clientagent.names(fleet)
+    if args.action == "list":
+        if not controlsync.remote_of(fleet.dir):
+            raise KiwiError("the clients report to the control node: join it first (kiwi-server control join %s LINK)"
+                            % typed_path(args.fleet))
+        rows = controlsync.clients_api(fleet.dir)
+        if args.porcelain:
+            print(json.dumps({"clients": rows}, indent=1))
+            return
+        if not rows:
+            util.say("no clients yet: kiwi-server client add %s NAME" % typed_path(args.fleet))
+        for r in rows:
+            f = r.get("facts") or {}
+            seen = time.strftime("%d %b %H:%M", time.localtime(r["seen"])) if r.get("seen") else "never"
+            vpn = ", ".join(v["link"] for v in f.get("vpn") or []) or "no VPN"
+            print("%-16s %-6s %-13s %-28s %s%s" % (r["name"], r["state"], seen, (f.get("os") or "")[:28], vpn,
+                                                  ("  on %s's box" % r["box_of"]) if r.get("box_of") else ""))
+        return
+    name = args.name
+    if not name:
+        raise KiwiError("which client? kiwi-server client %s %s NAME" % (args.action, typed_path(args.fleet)))
+    if not clientagent.NAME.match(name):
+        raise KiwiError("%r is not a plain name (lowercase letters, digits and dashes)" % name)
+    path = os.path.realpath(fleet.path)
+    if args.action == "add":
+        if name in have:
+            raise KiwiError("%s is a client already" % name)
+        if name in fleet.hosts:
+            raise KiwiError("%s is a machine of the fleet" % name)
+        before = util.read_text(path)
+        raw = yaml.safe_load(before) or {}
+        text = fleettext.put(before, ["clients", name], {}) if isinstance(raw.get("clients"), dict) else \
+            fleettext.put(before, ["clients"], {name: {}})
+        if text is None:
+            raise KiwiError("the fleet file could not be changed in place: add `clients: {%s: {}}` at its top level" % name)
+        util.write_text(path, text, 0o600)
+        util.say("%s is a client of %s. Next: put its agent on it, there with kiwi-server client install %s %s --here, "
+                 "or over SSH with --ssh USER@ADDRESS; kiwi-server control push %s brings it to the control node"
+                 % (name, shown_path(fleet.path), typed_path(args.fleet), name, typed_path(args.fleet)))
+        return
+    if name not in have:
+        raise KiwiError("no client called %s (kiwi-server client list %s)" % (name, typed_path(args.fleet)))
+    if args.action == "install":
+        if bool(args.here) == bool(args.ssh):
+            raise KiwiError("where? --here for this computer, or --ssh USER@ADDRESS for another")
+        ca = util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem")) if os.path.isfile(fleet.resolve_path("secrets/ca/kiwiCA.pem")) else ""
+        script = clientagent.install_script(fleet, name, agentmod.url(fleet, ms), ca)
+        key = clientagent.key(fleet, name).encode()
+        if args.here:       # sudo asks for this computer's password on the terminal, if it does
+            r = subprocess.run(["sudo", "sh", "-c", script], input=key)
+            if r.returncode != 0:
+                raise KiwiError("the agent was not put in place (exit %d)" % r.returncode)
+        else:
+            remote.run(args.ssh, script, key)
+        util.say("%s's agent reports to %s every minute; kiwi-server client list %s shows it"
+                 % (name, agentmod.url(fleet, ms), typed_path(args.fleet)))
+        return
+    if args.action == "remove":
+        if args.ssh:
+            remote.run(args.ssh, clientagent.REMOVE)
+            util.say("%s's agent is gone from %s" % (name, args.ssh))
+        before = util.read_text(path)
+        raw = yaml.safe_load(before) or {}
+        rest = {k: v for k, v in (raw.get("clients") or {}).items() if k != name}
+        text = fleettext.put(before, ["clients"], rest)
+        if text is None:
+            raise KiwiError("the fleet file could not be changed in place: take %s out of clients: by hand" % name)
+        util.write_text(path, text, 0o600)
+        util.say("%s is no client any more: its reports are refused from now on%s" % (
+            name, "" if args.ssh else "; its agent stays on the computer until kiwi-server client remove %s %s --ssh … "
+                                      "takes it away (or remove /etc/kiwi-client there)" % (typed_path(args.fleet), name)))
+        return
+    raise KiwiError("kiwi-server client add|install|list|remove FLEET [NAME]")
+
+
 def cmd_qr(args):
     """A file (a device's WireGuard config) as a QR code: in the terminal, or as an image."""
     data = util.read_bytes(args.file)
@@ -7053,6 +7143,8 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
+  kiwi-server client add|install|list|remove <fleet> [name] [--here|--ssh U@A]
+                                                a person's computer as a client: its agent reports to the control node
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
   kiwi-server ssh-config <fleet> [--write]      ssh's own configuration for the machines: `ssh papaya` with the fleet's key
   kiwi-server secrets show <fleet> <host> [setting]
@@ -7243,6 +7335,12 @@ def build_parser():
     s.add_argument("--new-host-key", action="store_true",
                    help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
+    s = sub("client", cmd_client)
+    s.add_argument("action", choices=["add", "install", "list", "remove"])
+    s.add_argument("fleet")
+    s.add_argument("name", nargs="?", help="the client: a person's computer (lowercase letters, digits, dashes)")
+    s.add_argument("--here", action="store_true", help="install: on this computer (sudo asks for its password)")
+    s.add_argument("--ssh", metavar="USER@ADDR", help="install, remove: on another computer, over SSH")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")

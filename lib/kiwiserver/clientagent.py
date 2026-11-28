@@ -23,7 +23,7 @@ NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FRESH = 150         # seconds a report counts as how the computer is now
 SKEW = 300
 LIMIT = 64 * 1024
-VERSION = 3
+VERSION = 4
 ORDERS = ("update", "profile")     # what a client's agent takes; nothing else, never a command
 
 FACTS = r'''
@@ -63,6 +63,7 @@ SCRIPT = r'''#!/bin/bash
 # orders, both signed with the same key: update the system now, apply the profile now. Nothing
 # else: never a command.
 d=%(dir)s
+VERSION=%(version)s
 . "$d/conf" || exit 0
 st=/var/lib/kiwi-client; mkdir -p -m 0700 "$st" 2>/dev/null
 luks() { lsblk -rpno NAME,FSTYPE 2>/dev/null | awk '$2 == "crypto_LUKS" {print $1; exit}'; }
@@ -190,6 +191,19 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     nmcli connection up "$con" >/dev/null 2>&1 || say "its VPN connection $con did not come up now: NetworkManager tries again"
     return 0
 }
+renew() {       # VERSION: a newer agent from the control node, signed with this computer's key, installs itself
+    local p h when sig code got sum
+    p=$(mktemp); h=$(mktemp); when=$(date +%%s)
+    sig=$(printf 'client-agent\n%%s\n%%s' "$NAME" "$when" | hmac)
+    code=$(curl -sS --max-time 30 --cacert "$d/ca.pem" -o "$p" -D "$h" -w '%%{http_code}' -H "X-Kiwi-Client: $NAME" \
+        -H "X-Kiwi-Time: $when" -H "X-Kiwi-Sign: $sig" "$URL/api/client/agent" 2>/dev/null)
+    got=$(sed -n 's/^[Xx]-[Kk]iwi-[Ss]ign: *//p' "$h" | tr -d '\r\n'); sum=$(sha256sum < "$p" | cut -d' ' -f1)
+    if [ "$code" != 200 ]; then say "its new agent ($1): $code"
+    elif [ -z "$got" ] || [ "$got" != "$(printf 'agent\n%%s\n%%s' "$NAME" "$sum" | hmac)" ]; then say "its new agent is not signed by the control node: left"
+    elif sh "$p" < "$d/key" > "$err" 2>&1; then say "its agent is version $1 now (it was $VERSION)"
+    else say "its new agent did not install: $(tail -n 2 "$err" | tr '\n' ' ' | cut -c1-160)"; fi
+    rm -f "$p" "$h"
+}
 profile() {     # the profile from the control node, signed with this computer's key; applied when it is new
     local p h when sig code got sum
     p=$(mktemp); h=$(mktemp); when=$(date +%%s)
@@ -202,6 +216,8 @@ profile() {     # the profile from the control node, signed with this computer's
     else
         NETWORK=$(sed -n 's/^network //p' "$p" | tr -cd 'a-z0-9-'); NETWORK=${NETWORK:-kiwi}
         if apply "$p"; then echo "$sum" > "$st/profile.sum"; say "its profile is applied (${sum:0:12})"; fi
+        av=$(sed -n 's/^agent_version //p' "$p" | tr -cd '0-9')
+        if [ -n "$av" ] && [ "$av" -gt "$VERSION" ]; then renew "$av"; fi
     fi
     rm -f "$p" "$h"
 }
@@ -250,6 +266,12 @@ out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o "$resp" -w '%%{http_code}' 
 case $out in 200) ;; 000|"") out="000 $(tr '\n' ' ' < "$err" | cut -c1-160)" ;; *) out="$out $(head -c 160 "$resp" | tr -d '\n')" ;; esac
 fi
 [ "$out" = "$(cat /run/kiwi-client-agent.last 2>/dev/null)" ] || { say "report to $URL: $out"; echo "$out" > /run/kiwi-client-agent.last; }
+# how it is, for the app on this computer (kiwi-desktop) and anyone who looks: no secret in it
+mkdir -p -m 0755 /run/kiwi-client 2>/dev/null
+ok=$(sed -n 's/^ok //p' /run/kiwi-client/status 2>/dev/null); [ "$out" = 200 ] && ok=$now
+{ echo "name $NAME"; echo "control $URL"; echo "asked $now"; echo "answer $out"; [ -n "$ok" ] && echo "ok $ok"
+  grep -v '^kiwi-done ' "$body"; } > /run/kiwi-client/status.new 2>/dev/null && chmod 0644 /run/kiwi-client/status.new \
+  && mv -f /run/kiwi-client/status.new /run/kiwi-client/status
 if [ "$out" = 200 ]; then
     : > "$st/told"
     want=$(sed -n 's/^profile //p' "$resp" | head -n 1)
@@ -359,7 +381,7 @@ def install_script(fleet, name, url, ca):
     if not ca.strip():
         raise KiwiError("the network's CA is not there (secrets/ca/kiwiCA.pem): render or apply once first")
     facts = FACTS % {"version": VERSION}
-    script = SCRIPT % {"dir": DIR}
+    script = SCRIPT % {"dir": DIR, "version": VERSION}
     return INSTALL % {"dir": DIR, "url": url, "name": name, "salt": salt(fleet), "ca": ca if ca.endswith("\n") else ca + "\n",
                       "facts": facts, "path": SCRIPT_PATH, "script": script, "unit": UNIT, "service": SERVICE, "timer": TIMER}
 
@@ -410,19 +432,25 @@ def rows(folder, clients, boxes=None, now=None):
     return out
 
 
-def request_signature(key_text, name, when):
-    """What signs a client's request for its profile: its name and the time."""
-    return hmac.new(key_text.encode(), ("client-profile\n%s\n%s" % (name, when)).encode(), hashlib.sha256).hexdigest()
+def request_signature(key_text, name, when, what="profile"):
+    """What signs a client's request for its profile (or its new agent): its name and the time."""
+    return hmac.new(key_text.encode(), ("client-%s\n%s\n%s" % (what, name, when)).encode(), hashlib.sha256).hexdigest()
 
 
-def check_request(key_text, name, when, sign, now=None):
+def agent_signature(key_text, name, body):
+    """What signs a new agent for the client, as profile_signature a profile."""
+    text = "agent\n%s\n%s" % (name, hashlib.sha256(body).hexdigest())
+    return hmac.new(key_text.encode(), text.encode(), hashlib.sha256).hexdigest()
+
+
+def check_request(key_text, name, when, sign, now=None, what="profile"):
     try:
         t = int(when)
     except (TypeError, ValueError):
         return "no time"
     if abs((now if now is not None else time.time()) - t) > SKEW:
         return "its clock and this one's are more than %d minutes apart" % (SKEW // 60)
-    if not hmac.compare_digest(request_signature(key_text, name, when), str(sign or "").strip().lower()):
+    if not hmac.compare_digest(request_signature(key_text, name, when, what), str(sign or "").strip().lower()):
         return "the signature is not this client's"
     return None
 
@@ -455,7 +483,7 @@ def profile(fleet, name, linked=(), unlock=None):
     tls = fleet.defaults.get("tls") or {}
     ca_path = os.path.join(fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
     lines = ["profile 1", "network %s" % re.sub(r"[^a-z0-9-]", "", domain.split(".")[0].lower()),
-             "connection %s" % connectmod.connection_name(domain)]
+             "connection %s" % connectmod.connection_name(domain), "agent_version %d" % VERSION]
     if os.path.isfile(ca_path):
         lines.append("ca " + base64.b64encode(util.read_bytes(ca_path)).decode())
     conf = vpn_conf_path(fleet, name)

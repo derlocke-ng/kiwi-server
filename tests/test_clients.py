@@ -70,7 +70,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
             w("bin/" + name, "#!/bin/bash\n" + body % {"t": self.t}, 0o755)
         self.w("bin/lsblk", "exit 0\n", 0o755)          # no disk of this computer is ever looked at
         # every path of the system the script touches lies in the test's folder
-        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent"})
+        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent", "version": clientagent.VERSION})
                        .replace("/var/lib/kiwi-client", self.t + "/state")
                        .replace("/etc/pki/ca-trust/source/anchors", self.t + "/anchors")
                        .replace("/usr/local/share/ca-certificates", self.t + "/no-certificates")
@@ -116,6 +116,40 @@ class TestClientProfileAndOrders(unittest.TestCase):
         os.remove(os.path.join(self.t, "trust"))
         self.run_agent()
         self.assertEqual((self.read("nm"), self.read("trust")), ("", ""))
+
+    def test_a_newer_agent_installs_itself_when_its_profile_says_so(self):
+        import hashlib
+        newer = self.profile.decode().replace("network home", "network home\nagent_version %d" % (clientagent.VERSION + 1)).encode()
+        self.w("profile", newer.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", newer))
+        self.answer("profile " + hashlib.sha256(newer).hexdigest())
+        installer = "cat > %s/run/installed-with-key\n" % self.t
+        self.w("agent.new", installer)
+        self.w("agent.sign", clientagent.agent_signature(KEY, "desk", installer.encode()))
+        curl = self.read("bin/curl").replace("case $u in */api/client/profile)",
+                                              'case $u in */api/client/agent) cp %(t)s/agent.new "$o"; printf "X-Kiwi-Sign: %%s\\r\\n" "$(cat %(t)s/agent.sign)" > "$h"; printf 200 ;;\n  */api/client/profile)' % {"t": self.t})
+        self.w("bin/curl", curl, 0o755)
+        self.run_agent()
+        self.assertEqual(self.read("run/installed-with-key"), KEY)          # the installer ran, the key on its stdin
+        self.assertIn("its agent is version %d now" % (clientagent.VERSION + 1), self.read("logged"))
+        # one not signed by the control node is left
+        os.remove(os.path.join(self.t, "run", "installed-with-key"))
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.w("agent.sign", clientagent.agent_signature("other", "desk", installer.encode()))
+        self.run_agent()
+        self.assertFalse(os.path.exists(os.path.join(self.t, "run", "installed-with-key")))
+        self.assertIn("its new agent is not signed by the control node", self.read("logged"))
+
+    def test_the_status_for_the_app_holds_no_secret(self):
+        self.answer()
+        self.run_agent()
+        status = self.read("run/kiwi-client/status")
+        self.assertIn("name desk\n", status)
+        self.assertIn("answer 200\n", status)
+        self.assertRegex(status, r"\nok \d+\n")
+        self.assertIn("os Test", status)
+        self.assertNotIn(KEY, status)
+        self.assertEqual(oct(os.stat(os.path.join(self.t, "run", "kiwi-client", "status")).st_mode & 0o777), "0o644")
 
     def test_leave_takes_away_what_the_agent_put_there(self):
         import hashlib
@@ -286,7 +320,8 @@ class TestClientAgent(unittest.TestCase):
                       " --data-binary) b=${2#@}; shift ;; esac; shift; done\ncp \"$b\" %(t)s/run/sent; printf 200\n" % {"t": self.t}, 0o755)
         w("bin/logger", "#!/bin/bash\necho \"$*\" >> %s/run/logged\n" % self.t, 0o755)
         w("bin/flock", "#!/bin/bash\nexit 0\n", 0o755)
-        self.script = (clientagent.SCRIPT % {"dir": self.t + "/agent"}).replace("/run/kiwi-client-agent", self.t + "/run/kiwi-client-agent")
+        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent", "version": clientagent.VERSION})
+                       .replace("/run/kiwi-client", self.t + "/run/kiwi-client").replace("/var/lib/kiwi-client", self.t + "/state"))
 
     def run_agent(self):
         path = os.path.join(self.t, "bin", "kiwi-client-agent")
@@ -346,7 +381,7 @@ class TestClientAgent(unittest.TestCase):
         self.assertIn("-----END CERTIFICATE-----\nKIWI_EOF", s)
         self.assertNotIn(clientagent.key(f, "pentest-1"), s)           # the key comes on stdin
         self.assertIn("key=$(cat)", s)
-        for text in (s, clientagent.SCRIPT % {"dir": "/etc/kiwi-client"}, clientagent.FACTS % {"version": 1}):
+        for text in (s, clientagent.SCRIPT % {"dir": "/etc/kiwi-client", "version": 1}, clientagent.FACTS % {"version": 1}):
             r = subprocess.run(["bash", "-n"], input=text, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
         with self.assertRaisesRegex(KiwiError, "no control node"):

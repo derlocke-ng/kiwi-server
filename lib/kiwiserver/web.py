@@ -3414,6 +3414,15 @@ def make_app(control: Control):
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/client/agent")
+    def client_agent(request: Request):
+        """The newest agent for a person's computer, signed with its own key, asked with that key."""
+        h = request.headers
+        body, sig = control.client_agent(h.get("x-kiwi-client") or "", h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "")
+        if body is None:
+            return JSONResponse({"error": sig}, status_code=503 if "locked" in sig else 403)
+        return PlainTextResponse(body.decode(), headers={"X-Kiwi-Sign": sig, "Cache-Control": "no-store"})
+
     @app.get("/api/client/profile")
     def client_profile(request: Request):
         """A person's computer's profile (the network's CA, its VPN), signed with its own key: asked

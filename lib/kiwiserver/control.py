@@ -2401,6 +2401,24 @@ class Control:
         body, _sum = self._client_profile(name)
         return body, clientagent.profile_signature(key, name, body)
 
+    def client_agent(self, name, when, sign):
+        """(the newest agent's installer, its signature) for a client that asks with its own key
+        (its profile names a newer version); else (None, why not). The key is not in it: the agent
+        that asks runs it with its own key on stdin."""
+        from . import clientagent, config, machineagent
+        if self.locked():
+            return None, "the control node is locked"
+        key = self._client_keys().get(name) if clientagent.NAME.match(name or "") else None
+        if not key:
+            return None, "no such client"
+        why = clientagent.check_request(key, name, when, sign, now=self.clock(), what="agent")
+        if why:
+            return None, why
+        fleet = config.Fleet.load(self.fleet_path)
+        body = clientagent.install_script(fleet, name, machineagent.url(fleet, self._modules()),
+                                          util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem"))).encode()
+        return body, clientagent.agent_signature(key, name, body)
+
     def client_answer(self, name, body):
         """What a client's agent is told after its report was taken: which profile is its own, and
         the lines of its orders."""

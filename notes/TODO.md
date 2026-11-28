@@ -126,8 +126,7 @@ L: days. New ideas go to the end of their section.
   (how long to keep them is the owner's). S
 - The local AI (after 2.310.0): the chosen model as a setting of the `ai` module, loaded by the
   machine itself after a start; choosing and loading a model in the app and on the control page. M
-- The local AI: Studio's Top-K fixed for every request (`ai.top_k`, kiwi-modules branch `ai-tune`,
-  rebased on 0.125.0): to try on lemonaide when it is free, then release. S
+- ~~The local AI: Studio's Top-K fixed for every request (`ai.top_k`).~~ Done (2.311.0), on lemonaide.
 - Taking over a v1 installation's data (notes/migration.md): Nextcloud AIO rehearsed on mulberry
   with a stand-in, with and without server-side encryption (27 Nov); Vaultwarden with an
   account and an item (27 Nov); the games on lemonaide (tests/drills/minecraft-takeover.sh,
@@ -137,7 +136,10 @@ L: days. New ideas go to the end of their section.
   (kiwi-modules 0.126.1, in 2.313.0).
 - Games, found at the takeover rehearsals (27 Nov 2026): a public Minecraft server with `sleep` is
   woken by the Internet's scanners again and again (medlar's `survival`: any knock on its port
-  counts; a wake only for a real join would need the first attempt to fail); Abiotic Factor's
+  counts; the log says who since 2.320.0, and on a node every knock from outside has the
+  master's address. Ways out, the owner's choice: only people at home and on the VPN wake a
+  public server; or the master tells scanners from players, where it sees their addresses);
+  Abiotic Factor's
   image sets the password `password` when none is given (said in docs/roles.md; the catalog
   cannot say "none"). ~~Satisfactory's game files lay inside its backed-up folder~~ (kiwi-modules
   0.133.0). S each

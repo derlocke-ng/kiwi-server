@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.320.0 — the log says who woke a sleeping game server
+
+- **games**: when a sleeping server wakes, the sleep service's log on the machine names where
+  the knock came from: an address at home or on the VPN, or "outside the home, through the
+  master" for what the master hands on (`journalctl -u kn-games-sleep`). A public server on a
+  well-known port is knocked on by the Internet's scanners all day and hardly sleeps (medlar's
+  public Minecraft server did not stay asleep for five minutes); until now the log only said
+  "a player knocked". (kiwi-modules 0.136.0)
+- **Three quieter logs**, found by reading the machines' own logs of a day (kiwi-modules
+  0.137.0). Transmission asked for a forwarded port every eight seconds inside the VPN
+  client's network, where no router answers: twenty thousand log lines a day on the machine
+  that runs it; switched off. A machine's report to the control node went through a file on
+  the disk each time, with a warning: it stays in memory now. A Tang ring's health check asks
+  every five minutes, not every minute: tang writes each request into the log as an error
+  line. Transmission, the control node's reverse proxy and the rings restart once.
+- Words put right: the entry of 2.318.0 said the nodes' tunnels were set up anew on 27 Nov
+  because the master's way out was away. The master's own log shows the home's address
+  changing at that time: the provider renumbered the home's Internet line. The entry is
+  corrected (kiwi-modules 0.136.1 corrects its own). The change itself stands as it is.
+
 ## 2.319.0 — the accounts are asked before an apply, too
 
 - **accounts**: before an apply writes a machine's stack, Kanidm tests the config it would get
@@ -15,16 +35,19 @@
 
 ## 2.318.0 — the parts say whether they work
 
-- **A node's tunnel to its master stays up while the master's way out is away.** The VPN
+- **A node's tunnel to its master stays up when its check of the Internet fails.** The VPN
   client's own check asks names on the Internet through the tunnel, and when that failed it
-  set the tunnel up anew: every six seconds for as long as the master's way out was away (27
-  Nov 2026: 76 times in eleven minutes on each of six machines), and a few times every
-  morning at seven when the way out reconnects. Each time everything on the mesh was cut for
-  that machine, and nothing was gained: it is the same server and the same keys. Now the
-  tunnel stays. Tried with the way to the Internet cut inside the tunnel: before, 23 restarts
-  in a minute and the mesh broke off; now none, 230 of 230 pings to the master answered
-  (kiwi-modules 0.134.0; `tests/drills/tunnel-steady.sh MACHINE` proves it). Every node's VPN
-  client restarts once with this apply.
+  set the tunnel up anew every six seconds. Each time everything on the mesh was cut for that
+  machine, and nothing was gained: it is the same server and the same keys. Seen on 27 Nov
+  2026, when the provider renumbered the home's Internet line at 03:01: six machines set their
+  tunnels up anew 76 times each; the line was back at 03:09, the mesh only at 03:14, and the
+  master's backup of that night failed at its first try. (Corrected in 2.320.0: this entry
+  first named the master's way out as the cause of that night.) The same happens when only the
+  master's way out is away and the mesh itself is fine. Now the tunnel stays. Tried with the
+  way to the Internet cut inside the tunnel: before, 23 restarts in a minute and the mesh
+  broke off; now none, 230 of 230 pings to the master answered (kiwi-modules 0.134.0;
+  `tests/drills/tunnel-steady.sh MACHINE` proves it). Every node's VPN client restarts once
+  with this apply.
 - **Health checks** for the reverse proxy, Pi-hole, the vault, fail2ban, the backup store, the
   VPN server, the control page and the public pages, every Tang ring, git, paste, the
   authenticator, Immich, Paperless, the caches, Transmission, the databases of Firefox Sync

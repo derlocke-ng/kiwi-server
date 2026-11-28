@@ -17,6 +17,7 @@ Environment=USER=user
 EnvironmentFile=/home/user/docker/kiwi/env/kn-transmission.env
 Volume=/home/user/docker/kn-transmission:/config:z
 Volume=/mnt/dl:/downloads:z
+Volume=/home/user/docker/kiwi/transmission:/custom-cont-init.d:ro,z
 HealthCmd=["nc","-z","127.0.0.1","9091"]
 HealthInterval=60s
 HealthTimeout=10s

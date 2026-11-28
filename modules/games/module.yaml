@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: games
   title: Game servers
-  version: 1.4.0
+  version: 1.5.0
   description: "Game servers for the people on your network: Minecraft, Enshrouded, Abiotic Factor, Zandronum, Valheim, Factorio, Satisfactory, Palworld, Terraria, or any other from an image. One container and one folder per server, reachable at home and through the VPN"
   category: gaming
   node_types: [node]

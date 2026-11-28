@@ -30,6 +30,8 @@ services:
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-transmission:/config:z
       - {{ download_dir }}:/downloads:z
+      # run by the image before the daemon starts (its custom-cont-init.d)
+      - {{ docker_dir }}/kiwi/transmission:/custom-cont-init.d:ro,z
 {% if jdownloader %}
 
   {{ container_prefix }}-jdownloader:

@@ -18,10 +18,11 @@ services:
       - "{{ port }}:7500"
 {% endif %}
     restart: unless-stopped
-    # it hands out its keys
+    # it hands out its keys. Every five minutes: tang writes each request into the machine's log
+    # as an error line, and a ring is not in a hurry
     healthcheck:
       test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:{{ port if node_type == 'master' else 7500 }}/adv"]
-      interval: 60s
+      interval: 300s
       timeout: 10s
       retries: 3
       start_period: 15s

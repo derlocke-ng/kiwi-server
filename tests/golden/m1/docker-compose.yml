@@ -178,6 +178,7 @@ services:
     volumes:
     - /home/user/docker/kn-transmission:/config:z
     - /mnt/dl:/downloads:z
+    - /home/user/docker/kiwi/transmission:/custom-cont-init.d:ro,z
   kn-jdownloader:
     image: docker.io/jlesage/jdownloader-2:latest
     container_name: kn-jdownloader

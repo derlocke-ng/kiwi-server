@@ -456,6 +456,26 @@ The agent keeps itself current: when the control node has a newer one, it says s
 computer's profile, and the agent fetches it, checks its signature and installs it. An agent of
 2.330 cannot do that yet: run its computer's *Join command* (Devices) once more.
 
+**A new computer from a stick:** `kiwi-server client iso` makes install media that installs
+Silverblue, Bluefin or Bluefin-DX and joins the network at the computer's first start:
+
+```bash
+kiwi-server client add fleet.yaml laptop-anna --vpn
+kiwi-server control push fleet.yaml
+kiwi-server client iso fleet.yaml laptop-anna --system bluefin --base Fedora-Silverblue-45.iso
+```
+
+`--base` is Fedora's installer (Silverblue's ISO, or Everything's network install, from
+fedoraproject.org). The stick installs the image straight from its registry, so the computer needs
+the Internet during the install. It wipes every disk of the computer and encrypts the new one; the
+installer asks for the disk's passphrase, and GNOME asks for its person at the first start.
+Universal Blue's images (Bluefin) are switched to their signed origin after the install, so their
+updates are checked against the signature. The stick carries a one-time join code that works for
+14 days (`--days`), once: whoever has the stick within that time can join as that computer.
+`--keymap` sets the keyboard of the install and of the disk's prompt; `--container` installs
+another bootc image (`ghcr.io/ublue-os/aurora:stable`). `--passphrase-file` puts the disk's
+passphrase on the stick: for test machines only.
+
 **What the agent does:**
 
 - It reports which box it runs on (a sum of the board's id, salted for this network), its

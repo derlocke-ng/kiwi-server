@@ -16177,6 +16177,10 @@ class TestFirstRunPage(StoreBase):
         util.write_text(os.path.join(self.c.reports_dir, machine + ".txt"), "now=1\nbox=0123456789abcdef\nos=uCore\n", 0o600)
         got = json.loads(self.ask("/api/clients", cookie=cookie)[1])["clients"]
         self.assertEqual(got[0]["box_of"], machine)
+        page = self.ask("/devices", cookie=cookie)[1]                        # and on the Devices page
+        self.assertIn("Computers that report", page)
+        self.assertIn("Kali GNU/Linux Rolling", page)
+        self.assertIn("%s&#39;s hardware" % machine, page)
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

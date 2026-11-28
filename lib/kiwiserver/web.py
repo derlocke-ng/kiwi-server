@@ -994,6 +994,20 @@ href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this 
 <button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
 {% endfor %}</tbody></table></div>{% endfor %}</form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
+{% if clients %}<h2 id="computers">Computers that report</h2>
+<p class="muted small">People's computers with the network's agent on them: it tells this page every minute how the
+computer is. A computer is its installed system: a system on a portable disk shows the machine it runs on now.</p>
+<div class="scroll"><table class="tbl"><thead><tr><th>Computer</th><th>Now</th><th>Runs on</th><th>System</th><th>VPN</th><th>Disk</th><th>Updates</th></tr></thead><tbody>
+{% for c in clients %}{% set f = c.facts %}<tr><td><b>{{ c.name }}</b>{% if f.hostname and f.hostname != c.name %}<br><span class="sm">{{ f.hostname }}</span>{% endif %}</td>
+<td><span class="badge {{ 'ok' if c.state == 'on' else '' }}" {% if c.seen %}title="Last report {{ age(now - c.seen) }} ago"{% endif %}>{{
+{"on": "on", "away": "away", "never": "not yet"}[c.state] }}</span></td>
+<td>{{ (c.box_of ~ "'s hardware") if c.box_of else ("its own box" if f.box else "-") }}</td>
+<td>{{ f.os or "-" }}</td>
+<td>{% if f.vpn %}{{ f.vpn | map(attribute="link") | join(", ") }}{% else %}<span class="muted">none</span>{% endif %}</td>
+<td>{% if f.crypt %}encrypted{% if f.clevis %}, opens by rings{% endif %}{% elif f.crypt == 0 %}<span class="badge bad">not encrypted</span>{% else %}-{% endif %}</td>
+{% set u = f.updates %}<td>{{ "-" if not u else "one waits for a restart" if u == "staged" else "none waiting" if u in ("none-staged", "0") else u ~ " waiting" }}</td></tr>
+{% endfor %}</tbody></table></div>
+<p class="muted small">A computer joins with <code>kiwi-server client add</code> and <code>client install</code> (docs: Machines, "People's computers").</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>
 {% endblock %}""",
@@ -3426,8 +3440,13 @@ def make_app(control: Control):
     def devices_page(request, **kw):
         info = control.fleet_info() or {}
         q = request.query_params.get("q") or "" if request.method == "GET" else ""
+        try:
+            clients = control.clients()
+        except (KiwiError, OSError, ValueError):
+            clients = []
         return page("devices.html", request, "/devices", devices=control.devices(), t=machtable.device_table(control.device_rows(), q),
-                    groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), **kw)
+                    groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), clients=clients,
+                    now=time.time(), **kw)
 
     @app.get("/devices")
     def devices(request: Request):

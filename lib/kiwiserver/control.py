@@ -2318,6 +2318,44 @@ class Control:
             return {h.name: agent.key(fleet, h) for h in fleet.hosts.values()}
         return self._read_once("agent-keys", read)
 
+    # ---- people's computers (docs/design/clients.md): their agents' reports -------------------
+    def _client_keys(self):
+        """{client: its key for reports}, from the seed, for the clients the fleet file lists."""
+        from . import clientagent, config
+
+        def read():
+            fleet = config.Fleet.load(self.fleet_path)
+            return {n: clientagent.key(fleet, n) for n in clientagent.names(fleet)}
+        return self._read_once("client-keys", read)
+
+    def client_report(self, name, when, sign, body):
+        """A client's agent says how its computer is. None when taken; else why not."""
+        from . import clientagent
+        if self.locked():
+            return "the control node is locked"
+        if not clientagent.NAME.match(name or ""):
+            return "no such client"
+        try:
+            key = self._client_keys().get(name)
+        except (KiwiError, OSError, ValueError) as e:
+            return "the fleet could not be read: %s" % e
+        if not key:
+            return "no such client"
+        why = clientagent.check(key, name, when, sign, body, now=self.clock())
+        if why:
+            return why
+        if self.clock() - self._reported_at.get("client:" + name, 0) < 10:
+            return None
+        self._reported_at["client:" + name] = self.clock()
+        clientagent.keep(self.reports_dir, name, body)
+        return None
+
+    def clients(self):
+        """The fleet's clients with their last report, and the machine whose box each one runs on."""
+        from . import clientagent, config
+        fleet = config.Fleet.load(self.fleet_path)
+        return clientagent.rows(self.reports_dir, clientagent.names(fleet), now=self.clock())
+
     # ---- orders for the machines' agents (docs/design/scale.md, "Takes orders") ----------------
     # A person asks (POST /api/orders); the machine's agent gets the order with the answer to its
     # next report, signed with its own key, runs it, and says what came of it in the report after.

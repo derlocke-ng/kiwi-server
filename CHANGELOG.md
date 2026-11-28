@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.329.0 — people's computers report to the network
+
+- **Clients** (docs/design/clients.md, the first step): a person's computer (a desktop, a
+  laptop, a pentest system on a portable SSD) is listed in the fleet file (`clients:`), and an
+  agent on it tells the control node once a minute how it is: which box it runs on (a sum of
+  the board's id, salted for this network: the same SSD on two machines is one client on two
+  boxes), its system, its VPN links, whether its disk is encrypted and bound to rings, its
+  pending updates. Signed with a key of its own from the seed; a client's report can never pass
+  for a machine's. `kiwi-server client add|install|list|remove`, `POST /api/client-report`,
+  `GET /api/clients`; the control page's proxy takes the reports from every VPN group
+  (kiwi-modules 0.141.0). It takes no orders yet and changes nothing on the computer.
+- **`remove`** sets a machine's disk keys aside in the store (`secrets/luks/removed/<day>/`), as
+  it does its kept passwords: before, they stayed under its name, and a new machine of that
+  name would have found them.
+- The fleet file can get a new block at its top level in place (`fleettext.put`), with its
+  comments kept.
+
 ## 2.328.0 — a new site no longer restarts Pi-hole
 
 - **DNS**: the fleet's names reach Pi-hole as a hosts file it reads again by itself

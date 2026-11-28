@@ -8023,6 +8023,25 @@ class TestManage(Base):
         self.assertIn("gate is the last machine of this network", err)
         self.assertEqual(sorted(config.Fleet.load(f.path).hosts), ["gate"])
 
+    def test_a_client_is_added_and_removed_in_the_fleet_file(self):
+        """kiwi-server client (docs/design/clients.md): a person's computer listed at the top of the
+        fleet file, under a plain name that is no machine's; the release before ignores the block."""
+        f = self.manage_fleet()
+        rc, out, err = self.run_cli("client", "add", f.path, "pentest-1")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("pentest-1 is a client", out + err)
+        self.assertEqual(config.Fleet.load(f.path).raw["clients"], {"pentest-1": {}})
+        self.assertEqual(self.run_cli("client", "add", f.path, "desk")[0], 0)
+        self.assertIn("a client already", self.run_cli("client", "add", f.path, "desk")[2])
+        self.assertIn("a machine of the fleet", self.run_cli("client", "add", f.path, "sh3")[2])
+        self.assertIn("not a plain name", self.run_cli("client", "add", f.path, "Desk_1")[2])
+        self.assertNotIn("clients", self.run_cli("validate", f.path)[2])     # the block is no mistake of the file
+        self.assertIn("where?", self.run_cli("client", "install", f.path, "desk")[2])
+        rc, out, err = self.run_cli("client", "remove", f.path, "pentest-1")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(config.Fleet.load(f.path).raw["clients"], {"desk": {}})
+        self.assertIn("no client called pentest-1", self.run_cli("client", "remove", f.path, "pentest-1")[2])
+
     def test_a_host_is_taken_out_as_text_and_the_comments_of_the_others_stay(self):
         path = os.path.join(self.tmp, "f.yaml")
         write(path, "defaults:\n  domain: home\nhosts:\n"
@@ -16112,6 +16131,41 @@ class TestFirstRunPage(StoreBase):
         self.assertIn('"ok"', post(False))
         got = post(True)
         self.assertTrue(got.startswith("order %s start kn-vault " % o["id"]), got)
+
+    def test_a_client_reports_and_is_listed(self):
+        """A person's computer (docs/design/clients.md): its agent's signed report is taken without a
+        login and listed for a person who is logged in; a client the fleet does not list, another
+        key, and a machine's signature are refused."""
+        import urllib.error
+        import urllib.request
+        from kiwiserver import clientagent, machineagent as agentmod
+        cookie, _csrf = self.made()
+        path = os.path.realpath(self.c.fleet_path)
+        util.write_text(path, fleettext.put(util.read_text(path), ["clients"], {"pentest-1": {}}), 0o600)
+        fleet = config.Fleet.load(self.c.fleet_path)
+        key = clientagent.key(fleet, "pentest-1")
+        body = b"box 0123456789abcdef\nos Kali GNU/Linux Rolling\nvpn wg0 10.9.0.77/32\nagent 1\n"
+
+        def post(name, sign, raw=body):
+            when = int(time.time())
+            req = urllib.request.Request(self.url + "/api/client-report", data=raw, method="POST", headers={
+                "X-Kiwi-Client": name, "X-Kiwi-Time": str(when), "X-Kiwi-Sign": sign(name, when), "Content-Type": "text/plain"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code
+        good = lambda n, w: clientagent.signature(key, n, w, body)          # noqa: E731
+        self.assertEqual(post("pentest-1", good), 200)
+        self.assertEqual(post("laptop", lambda n, w: clientagent.signature(key, n, w, body)), 403)     # not listed
+        self.assertEqual(post("pentest-1", lambda n, w: clientagent.signature("another", n, w, body)), 403)
+        self.assertEqual(post("pentest-1", lambda n, w: agentmod.signature(key, n, w, "", body)), 403)  # a machine's
+        status, text, _ = self.ask("/api/clients")
+        self.assertEqual(status, 401)                                         # the list needs a login
+        status, text, _ = self.ask("/api/clients", cookie=cookie)
+        got = json.loads(text)["clients"]
+        self.assertEqual([(r["name"], r["state"], r["facts"].get("os")) for r in got], [("pentest-1", "on", "Kali GNU/Linux Rolling")])
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

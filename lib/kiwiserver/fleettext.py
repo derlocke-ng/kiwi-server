@@ -59,6 +59,9 @@ def put(text, path, value):
         if "#" in head and len(new) == 1 and end == start + 1:      # a comment on its line stays there
             new[0] += "   " + head[head.index("#"):]
         out = lines[:start] + new + lines[end:]
+    elif len(path) == 1:            # a new key at the top (clients:): at the end of the file
+        body = text.rstrip("\n").split("\n") if text.strip() else []
+        out = body + _lines(path[-1], value, "") + [""]
     else:
         parent = _block(lines, list(path[:-1]))
         if not parent or lines[parent[0]].split("#")[0].rstrip().split(":", 1)[1].strip():

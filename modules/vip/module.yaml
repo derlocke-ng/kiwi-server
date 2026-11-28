@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: vip
   title: Moving address (VRRP)
-  version: 1.0.0
+  version: 1.0.1
   description: "An address on the LAN that two machines of a site share: one holds it while it is well, the other takes it within seconds when it is not. Devices get it as their DNS server and gateway and keep it (kiwi-server docs/design/basics-twice.md)."
   category: network
   node_types: [node]
@@ -68,4 +68,4 @@ settings:
   - key: image
     group: Advanced
     help: "The container image this module runs, pinned by tag. The default is this repository's build (images/keepalived)."
-    default: ghcr.io/derlocke-ng/keepalived:2.3-kiwi2
+    default: ghcr.io/derlocke-ng/keepalived:2.3-kiwi3

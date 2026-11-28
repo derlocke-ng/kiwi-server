@@ -13,7 +13,8 @@
 # SYSTEM's image from its registry (some gigabytes). The disk's passphrase is the drill's test
 # value, on the stick. KIWI_SERVER: the kiwi-server to use. One PASS or FAIL line per check.
 # phoenix (clevis in its boot system): KIWI_UNLOCK=1 (the default) binds its disk to the ring RING
-# (home) and starts it again with nobody at its prompt.
+# (home) and starts it again with nobody at its prompt. KIWI_SIGN_SWITCH=image: the stick leaves the
+# switch to the signed origin to the image (phoenix-desktop's own service) instead of its install.
 set -u
 fleet=${1:?the fleet file}; base=${2:?a Fedora installer ISO}; name=${3:-desk-iso}; system=${4:-bluefin}
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -65,6 +66,14 @@ check $rc "kiwi-server client iso makes the stick$([ $rc = 0 ] || echo ": $(tail
 [ $rc = 0 ] || exit 1
 xorriso -osirrox on -indev "$w/$name.iso" -extract /ks.cfg "$w/ks.cfg" >/dev/null 2>&1
 grep -q "ostreecontainer --url=" "$w/ks.cfg"; check $? "its kickstart installs $system from its registry"
+# KIWI_SIGN_SWITCH=image: the stick leaves the switch to the signed origin to the image itself
+# (phoenix-desktop's phoenix-signed-updates at the first start), as another installer would
+if [ "${KIWI_SIGN_SWITCH:-install}" = image ]; then
+    sed -i "/updates checked against the image's signature/d; /^bootc switch --mutate-in-place/d" "$w/ks.cfg"
+    xorriso -indev "$w/$name.iso" -outdev "$w/$name.noswitch.iso" -boot_image any replay -map "$w/ks.cfg" /ks.cfg -end >/dev/null 2>&1 \
+        && mv -f "$w/$name.noswitch.iso" "$w/$name.iso" && ! grep -q "bootc switch" "$w/ks.cfg"
+    check $? "the stick leaves the switch to the signed origin to the image"
+fi
 
 vh_put "$w/$name.iso" install.iso; check $? "the stick on ${VMHOST:-this computer}"
 vh "rm -f disk.qcow2; qemu-img create -f qcow2 disk.qcow2 64G >/dev/null && cp ${OVMF_PAIR##*:} vars.fd"
@@ -106,8 +115,13 @@ case $system in phoenix*)      # Bluefin with clevis in its boot system (github.
     ;;
 esac
 case $system in bluefin*|phoenix*)     # switched to the signed origin at the end of the install
-    vssh "rpm-ostree status 2>/dev/null | grep -q 'ostree-image-signed:'"
-    check $? "$system: its updates are checked against the image's signature (rpm-ostree status)" ;;
+    n=1; [ "${KIWI_SIGN_SWITCH:-install}" = image ] && n=18     # the image's own service, at the first start
+    while [ "$n" -gt 0 ]; do vssh "rpm-ostree status 2>/dev/null | grep -q 'ostree-image-signed:'" && break; n=$((n - 1)); [ "$n" -gt 0 ] && sleep 10; done
+    [ "$n" -gt 0 ]; check $? "$system: its updates are checked against the image's signature (rpm-ostree status)"
+    if [ "${KIWI_SIGN_SWITCH:-install}" = image ]; then
+        vssh "sudo journalctl -b --no-pager -u phoenix-signed-updates" > "$w/signed.log" 2>&1
+        grep -q "now checked" "$w/signed.log"; check $? "the image switched itself: $(grep -v '^--' "$w/signed.log" | tail -n 1 | cut -c1-120)"
+    fi ;;
 esac
 # a VM behind its host's NAT asks its host's resolver (on sh3: v1's, which knows no .home names)
 url=$(sed -n 's|.*\(https://[^/]*\)/api/client/join/.*|\1|p' "$w/ks.cfg" | head -n 1); host=${url#https://}

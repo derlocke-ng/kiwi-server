@@ -61,7 +61,9 @@ def image(system, override=None):
 
 def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en_US.UTF-8", passphrase=None,
               managed=False, admin_key=None):
-    """The kickstart, for the text installer (Fedora 45's web installer stops at its review page
+    """The kickstart, for the text installer. It powers off at the end: a stick left in would install
+    again at the next start (a VM's did, 28 Nov 2026), so the person takes it out and switches on.
+    The kickstart is (Fedora 45's web installer stops at its review page
     instead of running a kickstart through, 28 Nov 2026; the text one asks for the passphrase on
     the screen when it is not given): the image onto an encrypted btrfs disk (every disk of the computer is wiped),
     the network by DHCP, no user (GNOME's first start asks for one: its person is its admin; a
@@ -98,7 +100,7 @@ clearpart --all --initlabel --disklabel=gpt
 autopart --type=btrfs --encrypted --luks-version=luks2%(secret)s
 ostreecontainer --url=%(img)s --transport=registry --no-signature-verification
 firstboot --%(firstboot)s
-reboot --eject
+poweroff
 
 %%post --erroronfail
 install -d -m 0700 /etc/kiwi-client-join

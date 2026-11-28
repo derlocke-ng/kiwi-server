@@ -64,17 +64,16 @@ say "installing $system from its registry (gigabytes: a while)"
 t0=$(date +%s)
 vm_start install.log -drive if=none,id=cd,format=raw,readonly=on,media=cdrom,file=install.iso \
     -device ide-cd,drive=cd,bootindex=0
-# the installer reboots when it is done (reboot --eject): the disk asks for its passphrase then
+# the installer powers off when it is done: the stick comes out, the computer starts from its disk
 n=5400; while [ "$n" -gt 0 ]; do
     vm_running || break
     # the secret store locks itself after 30 idle minutes: kept in use while the install runs
     [ $((n % 300)) = 0 ] && "$KIWI" client list "$fleet" >/dev/null 2>&1
-    if vh "python3 -c 'import socket,time
-s=socket.socket(socket.AF_UNIX); s.connect(\"monitor.sock\"); time.sleep(0.3); s.recv(4096)
-s.send(b\"info block\\n\"); time.sleep(0.5); print(s.recv(8192).decode(errors=\"replace\"))'" 2>/dev/null | grep -q "cd.*not inserted\|cd.*\[not inserted\]"; then break; fi
     sleep 30; n=$((n - 30))
 done
-[ "$n" -gt 0 ] && vm_running; check $? "installed, the stick ejected ($(( ($(date +%s) - t0) / 60 )) minutes)"
+[ "$n" -gt 0 ]; check $? "installed, and switched off by itself ($(( ($(date +%s) - t0) / 60 )) minutes)"
+vh 'rm -f qemu.pid'
+vm_start first.log
 sleep 60
 keys "$PASS_PHRASE"; say "        the passphrase typed at its boot prompt"
 n=60; got=

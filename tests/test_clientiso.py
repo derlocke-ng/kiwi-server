@@ -23,7 +23,8 @@ class TestClientIso(unittest.TestCase):
         self.assertIn("autopart --type=btrfs --encrypted --luks-version=luks2\n", ks)    # the passphrase is asked
         self.assertIn("keyboard --vckeymap=de\n", ks)
         self.assertIn("firstboot --enable", ks)                                         # GNOME asks for its person
-        self.assertIn("reboot --eject\n", ks)                                           # from its disk, not the stick
+        self.assertIn("\npoweroff\n", ks)                                               # the stick out first, then on
+        self.assertNotIn("reboot", ks)
         self.assertNotIn("\nuser ", ks)
         self.assertIn("printf '%s\\n' '" + URL + "' > /etc/kiwi-client-join/url", ks)
         self.assertIn("ExecStart=/bin/sh /etc/kiwi-client-join/join.sh", ks)

@@ -499,7 +499,9 @@ kiwi-server client iso fleet.yaml laptop-anna --system bluefin --base Fedora-Sil
 `--base` is Fedora's installer (Silverblue's ISO, or Everything's network install, from
 fedoraproject.org). The stick installs the image straight from its registry, so the computer needs
 the Internet during the install. It wipes every disk of the computer and encrypts the new one; the
-installer asks for the disk's passphrase, and GNOME asks for its person at the first start.
+installer asks for the disk's passphrase. When it is done the computer switches off: take the stick
+out, then switch it on (left in, the stick would install again). GNOME asks for its person at the
+first start.
 Universal Blue's images (Bluefin) are switched to their signed origin after the install, so their
 updates are checked against the signature. The stick carries a one-time join code that works for
 14 days (`--days`), once: whoever has the stick within that time can join as that computer.

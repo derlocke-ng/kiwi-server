@@ -405,6 +405,16 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.assertIn("connection up kiwi-home", self.read("nm"))
         self.assertIn("AllowedIPs = 0.0.0.0/0\n", self.read("imported"))  # the tunnel takes all; its modes pick
 
+    def test_a_note_on_the_way_leaves_the_json_clean(self):
+        import contextlib
+        import io
+        from kiwiserver import util
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            util.note("the control node answers at its address at home (192.168.2.30)")
+        self.assertEqual(out.getvalue(), "")                 # `client list --porcelain` is JSON only
+        self.assertIn("at its address at home", err.getvalue())
+
     def test_managed_of_reads_the_block(self):
         self.assertIsNone(clientagent.managed_of({}, "https://id.x"))
         self.assertEqual(clientagent.managed_of({"kind": "managed"}, "https://id.x"),

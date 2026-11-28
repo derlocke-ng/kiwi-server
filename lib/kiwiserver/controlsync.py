@@ -341,7 +341,7 @@ def api_for(fleet_dir, key=None):
             raise
         api = Api(r["url"], ca if os.path.isfile(ca) else None, home)
         api.login(r["name"], key, os.path.join(fleet_dir, "control"))
-        util.say("the control node answers at its address at home (%s): this computer is not on the VPN" % home)
+        util.note("the control node answers at its address at home (%s): this computer is not on the VPN" % home)
     return api, key
 
 

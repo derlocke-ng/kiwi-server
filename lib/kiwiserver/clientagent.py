@@ -259,6 +259,23 @@ polkit.addRule(function(action, subject) {
         rm -f "$rules"; say "installing software is as the system has it again"
     fi
 }
+desktop() {     # PROFILE: a managed computer's GNOME settings, and the ones its people may not change
+    local p=$1 keys locks changed=
+    keys=$(sed -n 's/^dconf //p' "$p" | base64 -d 2>/dev/null); locks=$(sed -n 's/^dconf_locks //p' "$p" | base64 -d 2>/dev/null)
+    command -v dconf >/dev/null 2>&1 || return 0
+    if [ -z "$keys$locks" ]; then
+        if [ -f /etc/dconf/db/local.d/50-kiwi ] || [ -f /etc/dconf/db/local.d/locks/50-kiwi ]; then
+            rm -f /etc/dconf/db/local.d/50-kiwi /etc/dconf/db/local.d/locks/50-kiwi; dconf update; say "its desktop settings are its people's again"
+        fi
+        return 0
+    fi
+    mkdir -p /etc/dconf/profile /etc/dconf/db/local.d/locks
+    # the system database `local` read under each person's own (Fedora has none by default)
+    grep -q '^system-db:local' /etc/dconf/profile/user 2>/dev/null || { printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user; changed=1; }
+    [ "$(cat /etc/dconf/db/local.d/50-kiwi 2>/dev/null)" = "$keys" ] || { printf '%%s\n' "$keys" > /etc/dconf/db/local.d/50-kiwi; changed=1; }
+    [ "$(cat /etc/dconf/db/local.d/locks/50-kiwi 2>/dev/null)" = "$locks" ] || { printf '%%s\n' "$locks" > /etc/dconf/db/local.d/locks/50-kiwi; changed=1; }
+    if [ -n "$changed" ]; then dconf update && say "its desktop settings are the network's now (dconf, locked: $(printf '%%s' "$locks" | grep -c .))"; fi
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
     local p=$1 ca f upd vpn con mode search tmp
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
@@ -271,7 +288,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         fi
     fi
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
-    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then managed "$p"; software "$p"; fi
+    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then managed "$p"; software "$p"; desktop "$p"; fi
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -600,7 +617,40 @@ def managed_of(block, accounts_url):
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}", str(a)):
             raise KiwiError("apps: %r is not a Flatpak app id (like org.mozilla.firefox)" % a)
     return {"accounts": accounts_url, "login": groups("login_groups", "computers"), "admins": groups("admin_groups", "admins"),
-            "apps": [str(a) for a in apps], "lock": block.get("lock_software", True) is not False}
+            "apps": [str(a) for a in apps], "lock": block.get("lock_software", True) is not False,
+            "dconf": dconf_files(block)}
+
+
+DCONF_PATH = re.compile(r"^[a-z0-9][a-z0-9.-]*(/[a-zA-Z0-9.-]+)+$")
+DCONF_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def dconf_files(block):
+    """(keyfile, locks) for a managed computer's GNOME (dconf's system database `local`), or None:
+    `desktop_settings` {path: {key: GVariant text}}, `desktop_locks` [/path/key] its people may not
+    change."""
+    settings = (block or {}).get("desktop_settings") or {}
+    locks = (block or {}).get("desktop_locks") or []
+    if not settings and not locks:
+        return None
+    if not isinstance(settings, dict) or not isinstance(locks, list):
+        raise KiwiError("desktop_settings is a mapping of dconf paths, desktop_locks a list of keys")
+    out = ["# kiwi-server: this managed computer's settings (its profile)"]
+    for path, keys in sorted(settings.items()):
+        if not DCONF_PATH.match(str(path).strip("/")) or not isinstance(keys, dict):
+            raise KiwiError("desktop_settings: %r is not a dconf path with its keys (org/gnome/desktop/screensaver)" % path)
+        out.append("[%s]" % str(path).strip("/"))
+        for key, value in sorted(keys.items()):
+            text = str(value).lower() if isinstance(value, bool) else str(value)
+            if not DCONF_KEY.match(str(key)) or "\n" in text:
+                raise KiwiError("desktop_settings: %s/%s is not a key with a value on one line" % (path, key))
+            out.append("%s=%s" % (key, text))
+    lock_lines = []
+    for lock in locks:
+        if not DCONF_PATH.match(str(lock).strip("/")):
+            raise KiwiError("desktop_locks: %r is not a dconf key (/org/gnome/desktop/screensaver/lock-enabled)" % lock)
+        lock_lines.append("/" + str(lock).strip("/"))
+    return "\n".join(out) + "\n", "\n".join(lock_lines) + ("\n" if lock_lines else "")
 
 
 def profile(fleet, name, linked=(), unlock=None, managed=None):
@@ -628,6 +678,9 @@ def profile(fleet, name, linked=(), unlock=None, managed=None):
                   "admin_groups " + ",".join(managed["admins"]), "lock_software " + ("yes" if managed.get("lock", True) else "no")]
         if managed.get("apps"):
             lines.append("apps " + ",".join(managed["apps"]))
+        if managed.get("dconf"):
+            keyfile, locks = managed["dconf"]
+            lines += ["dconf " + base64.b64encode(keyfile.encode()).decode(), "dconf_locks " + base64.b64encode(locks.encode()).decode()]
     if unlock:          # its disk's policy (unlock_tree): kept bound by the agent once a person bound it
         import json
         lines.append("unlock " + base64.b64encode(json.dumps(unlock, sort_keys=True, separators=(",", ":")).encode()).decode())

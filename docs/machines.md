@@ -470,8 +470,21 @@ systems.
 Its software: `apps` in its block lists the Flatpaks it has for everyone (from Flathub, like
 `[org.mozilla.firefox, org.libreoffice.LibreOffice]`), and only the network's admins install or
 remove software for the whole computer (`lock_software`, on unless set to `false`; a polkit
-rule). A person can still install a Flatpak into their own home folder; locking that too, and how
-the desktop is set (GNOME's settings and locks), come next.
+rule). A person can still install a Flatpak into their own home folder; locking that too comes
+next.
+
+Its desktop: `desktop_settings` sets GNOME's settings for everyone (dconf paths with their keys and
+values as dconf writes them), and `desktop_locks` names the ones its people may not change:
+
+```yaml
+clients:
+  office-1:
+    kind: managed
+    apps: [org.mozilla.firefox, org.libreoffice.LibreOffice]
+    desktop_settings:
+      org/gnome/desktop/screensaver: {lock-enabled: true, lock-delay: "uint32 0"}
+    desktop_locks: [/org/gnome/desktop/screensaver/lock-enabled]
+```
 
 **A new computer from a stick:** `kiwi-server client iso` makes install media that installs
 Silverblue, Bluefin or Bluefin-DX and joins the network at the computer's first start:

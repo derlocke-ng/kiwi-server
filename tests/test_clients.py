@@ -81,6 +81,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
                        .replace("/etc/authselect", self.t + "/sys/authselect")
                        .replace("/etc/sudoers.d", self.t + "/sys/sudoers.d")
                        .replace("/etc/polkit-1", self.t + "/sys/polkit-1")
+                       .replace("/etc/dconf", self.t + "/sys/dconf")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
         for path in ("/etc/", "/usr/local/share", "/var/lib/"):
             self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
@@ -330,10 +331,32 @@ class TestClientProfileAndOrders(unittest.TestCase):
         if r is not None:
             self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_a_managed_computers_desktop_is_set_and_locked(self):
+        import base64
+        self.managed_stubs()
+        self.w("bin/dconf", 'echo "dconf $*" >> %s/said\n' % self.t, 0o755)
+        keys, locks = clientagent.dconf_files({"desktop_settings": {"org/gnome/desktop/screensaver": {"lock-enabled": True}},
+                                               "desktop_locks": ["org/gnome/desktop/screensaver/lock-enabled"]})
+        self.profile = self.profile.decode().replace("network home", "network home\ndconf %s\ndconf_locks %s" % (
+            base64.b64encode(keys.encode()).decode(), base64.b64encode(locks.encode()).decode()), 1).encode()
+        self.run_managed()
+        self.assertEqual(self.read("sys/dconf/profile/user"), "user-db:user\nsystem-db:local\n")
+        self.assertIn("[org/gnome/desktop/screensaver]\nlock-enabled=true\n", self.read("sys/dconf/db/local.d/50-kiwi"))
+        self.assertEqual(self.read("sys/dconf/db/local.d/locks/50-kiwi"), "/org/gnome/desktop/screensaver/lock-enabled\n")
+        self.assertIn("dconf update", self.read("said"))
+
+    def test_dconf_files_refuse_what_is_no_setting(self):
+        self.assertIsNone(clientagent.dconf_files({}))
+        for bad in ({"desktop_settings": {"org/gnome/x": {"a\nb": "1"}}}, {"desktop_settings": {"../etc": {"a": "1"}}},
+                    {"desktop_locks": ["not a key"]}, {"desktop_settings": {"org/gnome/x": {"a": "1\n[evil]"}}}):
+            with self.assertRaises(KiwiError):
+                clientagent.dconf_files(bad)
+
     def test_managed_of_reads_the_block(self):
         self.assertIsNone(clientagent.managed_of({}, "https://id.x"))
         self.assertEqual(clientagent.managed_of({"kind": "managed"}, "https://id.x"),
-                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"], "apps": [], "lock": True})
+                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"], "apps": [], "lock": True,
+                          "dconf": None})
         with self.assertRaisesRegex(KiwiError, "not a Flatpak app id"):
             clientagent.managed_of({"kind": "managed", "apps": ["firefox; rm -rf /"]}, "https://id.x")
         self.assertEqual(clientagent.managed_of({"kind": "managed", "login_groups": "staff"}, "https://id.x")["login"], ["staff"])

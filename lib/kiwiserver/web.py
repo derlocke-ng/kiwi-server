@@ -1029,8 +1029,8 @@ computer is. A computer is its installed system: a system on a portable disk sho
 <input type="hidden" name="name" value="{{ c.name }}"><button title="Its system's update, now: rpm-ostree or apt. A new system image counts from its next start">Update now</button></form>
 <form class="inline" method="post" action="/devices/computer-profile">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
 <button title="The network's CA and its VPN connection, set up again as the network says">Apply its profile</button></form>{% endif %}
-{% if c.state == "never" %}<form class="inline" method="post" action="/devices/computer-join">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
-<button title="It has not reported yet: a new one-time command that puts the agent on it">Join command</button></form>{% endif %}</td></tr>
+<form class="inline" method="post" action="/devices/computer-join">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
+<button title="A new one-time command that puts the agent on it: for one that has not joined, or whose agent is too old to renew itself">Join command</button></form></td></tr>
 {% endfor %}</tbody></table></div>
 <p class="muted small">A computer joins with <code>kiwi-server client add</code> and <code>client install</code> (docs: Machines, "People's computers").</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
@@ -3413,6 +3413,15 @@ def make_app(control: Control):
             return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api")}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/client/agent")
+    def client_agent(request: Request):
+        """The newest agent for a person's computer, signed with its own key, asked with that key."""
+        h = request.headers
+        body, sig = control.client_agent(h.get("x-kiwi-client") or "", h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "")
+        if body is None:
+            return JSONResponse({"error": sig}, status_code=503 if "locked" in sig else 403)
+        return PlainTextResponse(body.decode(), headers={"X-Kiwi-Sign": sig, "Cache-Control": "no-store"})
 
     @app.get("/api/client/profile")
     def client_profile(request: Request):

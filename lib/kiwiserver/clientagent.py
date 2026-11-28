@@ -23,7 +23,7 @@ NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FRESH = 150         # seconds a report counts as how the computer is now
 SKEW = 300
 LIMIT = 64 * 1024
-VERSION = 2
+VERSION = 4
 ORDERS = ("update", "profile")     # what a client's agent takes; nothing else, never a command
 
 FACTS = r'''
@@ -51,6 +51,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     echo "updates $(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ')"
 fi
 [ -s /var/lib/kiwi-client/profile.sum ] && echo "profile $(cut -c1-12 /var/lib/kiwi-client/profile.sum)"
+if [ -s /var/lib/kiwi-client/unlock.json ]; then [ -s /var/lib/kiwi-client/unlock.slot ] && echo "unlock bound" || echo "unlock waits"; fi
 echo "agent %(version)s"
 '''
 
@@ -62,12 +63,111 @@ SCRIPT = r'''#!/bin/bash
 # orders, both signed with the same key: update the system now, apply the profile now. Nothing
 # else: never a command.
 d=%(dir)s
+VERSION=%(version)s
 . "$d/conf" || exit 0
 st=/var/lib/kiwi-client; mkdir -p -m 0700 "$st" 2>/dev/null
+luks() { lsblk -rpno NAME,FSTYPE 2>/dev/null | awk '$2 == "crypto_LUKS" {print $1; exit}'; }
+slots() { clevis luks list -d "$1" 2>/dev/null | cut -d: -f1 | sort; }
+if [ "${1:-}" = bind ]; then
+    # once, by the person at the computer: its disk bound to the network's rings (its profile's
+    # policy), beside its passphrase, which keeps working. clevis asks for that passphrase.
+    [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 bind" >&2; exit 2; }
+    [ -s "$st/unlock.json" ] || { echo "this computer's profile has no disk policy: the network's settings give it one (unlock: rings: under its name in clients:); then wait a minute and run this again" >&2; exit 2; }
+    dev=$(luks); [ -n "$dev" ] || { echo "no encrypted disk here: nothing to bind" >&2; exit 2; }
+    if command -v rpm-ostree >/dev/null 2>&1; then
+        echo "clevis into the system image and its boot system, and the network at boot (rpm-ostree)"
+        rpm-ostree install -y --idempotent clevis clevis-luks clevis-dracut >/dev/null || exit 1
+        rpm-ostree initramfs --enable --arg=-a --arg=clevis --arg=-a --arg=clevis-pin-tang --arg=-a --arg=clevis-pin-sss >/dev/null || exit 1
+        rpm-ostree kargs --append-if-missing=rd.neednet=1 --append-if-missing=ip=dhcp >/dev/null || exit 1
+        command -v clevis >/dev/null 2>&1 || { echo "that counts from the next start: restart the computer, then run this again"; exit 0; }
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "clevis and its boot-system part, and the network at boot (apt, grub)"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q clevis clevis-luks clevis-initramfs >/dev/null || exit 1
+        # ip=::::::dhcp, not ip=dhcp: clevis-initramfs takes field 6 of ip= as the device to wait for
+        mkdir -p /etc/default/grub.d && printf 'GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ip=::::::dhcp"\n' > /etc/default/grub.d/kiwi-clevis.cfg
+        update-grub >/dev/null 2>&1 || echo "update-grub did not run: the boot system may find no network" >&2
+    else
+        command -v clevis >/dev/null 2>&1 || { echo "no rpm-ostree, no apt-get here: install clevis with its boot-system part, then run this again" >&2; exit 2; }
+    fi
+    before=$(slots "$dev")
+    if [ "${2:-}" = --stdin ]; then      # the app: the passphrase on stdin, from its own field
+        clevis luks bind -y -k - -d "$dev" sss "$(cat "$st/unlock.json")" || exit 1
+    else
+        echo "the disk's passphrase now ($dev):"
+        clevis luks bind -y -d "$dev" sss "$(cat "$st/unlock.json")" || exit 1
+    fi
+    slots "$dev" | comm -13 <(printf '%%s\n' "$before") - | head -n 1 > "$st/unlock.slot"
+    sha256sum < "$st/unlock.json" | cut -d' ' -f1 > "$st/unlock.sum"
+    command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u -k all >/dev/null 2>&1
+    echo "bound: from the next start the disk opens by the network's rings, and still by its passphrase"
+    exit 0
+fi
+if [ "${1:-}" = update ]; then          # the system's update now, as the order does (the app's button)
+    [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 update" >&2; exit 2; }
+    if command -v rpm-ostree >/dev/null 2>&1; then exec systemd-run --quiet --collect --unit=kiwi-update-now --wait rpm-ostree upgrade
+    elif command -v apt-get >/dev/null 2>&1; then exec systemd-run --quiet --collect --unit=kiwi-update-now --wait \
+        --setenv=DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update -q && apt-get upgrade -y -q'
+    fi
+    echo "no rpm-ostree, no apt-get here" >&2; exit 2
+fi
+if [ "${1:-}" = now ]; then             # report now, not with the next minute (the app's Refresh)
+    exec systemctl start kiwi-client-agent.service
+fi
+if [ "${1:-}" = leave ]; then
+    # this computer leaves the network: everything the agent put on it goes, the agent last
+    [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 leave" >&2; exit 2; }
+    systemctl disable --now -q kiwi-client-agent.timer 2>/dev/null
+    dev=$(luks); slot=$(cat "$st/unlock.slot" 2>/dev/null)
+    if [ -n "$slot" ] && [ -n "$dev" ]; then clevis luks unbind -d "$dev" -s "$slot" -f >/dev/null 2>&1 && echo "the disk no longer opens by the network's rings (its passphrase does, as before)"; fi
+    con=$(cat "$st/vpn.name" 2>/dev/null)     # the one it made, not one of the same name made by hand
+    if [ -n "$con" ] && [ -f "$st/vpn.sum" ] && nmcli connection delete "$con" >/dev/null 2>&1; then echo "its VPN connection $con is gone"; fi
+    for f in /etc/pki/ca-trust/source/anchors/kiwi-*.pem /usr/local/share/ca-certificates/kiwi-*.crt; do
+        [ -f "$f" ] || continue
+        rm -f "$f"; echo "the network's CA is no longer trusted ($f)"
+        update-ca-trust >/dev/null 2>&1 || update-ca-certificates >/dev/null 2>&1
+    done
+    rm -f /etc/default/grub.d/kiwi-clevis.cfg
+    rm -rf "$d" "$st" /etc/systemd/system/kiwi-client-agent.service /etc/systemd/system/kiwi-client-agent.timer
+    systemctl daemon-reload
+    echo "this computer has left the network; the network's own list loses it with kiwi-server client remove, or Remove on the page"
+    rm -f "$0"
+    exit 0
+fi
 exec 9>/run/kiwi-client-agent.lock; flock -n 9 || exit 0
 body=$(mktemp) || exit 0; resp=$(mktemp) || exit 0; err=$(mktemp) || exit 0; trap 'rm -f "$body" "$resp" "$err"' EXIT
 hmac() { openssl dgst -sha256 -hmac "$(cat "$d/key")" -r 2>/dev/null | cut -d' ' -f1; }
 say() { logger -t kiwi-client-agent "$*"; }
+unlocked() {    # POLICY or nothing: a disk a person bound (bind) kept bound to it; unbound when there is none
+    local cfg=$1 dev slot key new sum before
+    dev=$(luks); slot=$(cat "$st/unlock.slot" 2>/dev/null)
+    if [ -z "$cfg" ]; then
+        if [ -n "$slot" ] && [ -n "$dev" ] && clevis luks unbind -d "$dev" -s "$slot" -f >/dev/null 2>&1; then
+            say "its disk no longer opens by the network's rings: the profile has none"
+        fi
+        rm -f "$st/unlock.json" "$st/unlock.slot" "$st/unlock.sum"; return 0
+    fi
+    printf '%%s' "$cfg" > "$st/unlock.json"
+    sum=$(sha256sum < "$st/unlock.json" | cut -d' ' -f1)
+    [ -n "$dev" ] || return 0
+    if [ -z "$slot" ]; then
+        [ -f "$st/unlock.told" ] || { say "its disk waits to be bound to the network's rings: sudo kiwi-client-agent bind, once, at the computer (it asks for the disk's passphrase)"; : > "$st/unlock.told"; }
+        return 0
+    fi
+    [ "$sum" = "$(cat "$st/unlock.sum" 2>/dev/null)" ] && return 0
+    # the policy changed (another ring, a new key): bound anew from the binding it has, no passphrase;
+    # its rings must answer now, else it is tried again with the next report
+    key=$(clevis luks pass -d "$dev" -s "$slot" 2>/dev/null) || { say "its disk's new policy waits: its rings do not answer now"; return 0; }
+    before=$(slots "$dev")
+    if printf '%%s' "$key" | clevis luks bind -y -k - -d "$dev" sss "$cfg" >/dev/null 2>"$err"; then
+        new=$(slots "$dev" | comm -13 <(printf '%%s\n' "$before") - | head -n 1)
+        clevis luks unbind -d "$dev" -s "$slot" -f >/dev/null 2>&1
+        echo "$new" > "$st/unlock.slot"; echo "$sum" > "$st/unlock.sum"
+        say "its disk opens by the network's rings as they are now (slot $new)"
+    else
+        say "its disk could not be bound anew: $(tr '\n' ' ' < "$err" | cut -c1-160)"
+    fi
+    key=
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
     local p=$1 ca f upd vpn con mode search tmp
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
@@ -79,6 +179,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
             printf '%%s\n' "$ca" > "$f" && chmod 0644 "$f" && $upd >/dev/null 2>&1 && say "the network's CA is trusted by the system now ($f)"
         fi
     fi
+    unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -94,7 +195,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
             say "its VPN connection could not be made: $(tr '\n' ' ' < "$err" | cut -c1-160)"; rm -rf "$tmp"; return 1
         fi
         rm -rf "$tmp"
-        printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"
+        printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
         say "its VPN connection $con is made"
     fi
     if [ "$mode" = full ]; then     # everything through the VPN, every name asked there
@@ -104,6 +205,19 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     fi
     nmcli connection up "$con" >/dev/null 2>&1 || say "its VPN connection $con did not come up now: NetworkManager tries again"
     return 0
+}
+renew() {       # VERSION: a newer agent from the control node, signed with this computer's key, installs itself
+    local p h when sig code got sum
+    p=$(mktemp); h=$(mktemp); when=$(date +%%s)
+    sig=$(printf 'client-agent\n%%s\n%%s' "$NAME" "$when" | hmac)
+    code=$(curl -sS --max-time 30 --cacert "$d/ca.pem" -o "$p" -D "$h" -w '%%{http_code}' -H "X-Kiwi-Client: $NAME" \
+        -H "X-Kiwi-Time: $when" -H "X-Kiwi-Sign: $sig" "$URL/api/client/agent" 2>/dev/null)
+    got=$(sed -n 's/^[Xx]-[Kk]iwi-[Ss]ign: *//p' "$h" | tr -d '\r\n'); sum=$(sha256sum < "$p" | cut -d' ' -f1)
+    if [ "$code" != 200 ]; then say "its new agent ($1): $code"
+    elif [ -z "$got" ] || [ "$got" != "$(printf 'agent\n%%s\n%%s' "$NAME" "$sum" | hmac)" ]; then say "its new agent is not signed by the control node: left"
+    elif sh "$p" < "$d/key" > "$err" 2>&1; then say "its agent is version $1 now (it was $VERSION)"
+    else say "its new agent did not install: $(tail -n 2 "$err" | tr '\n' ' ' | cut -c1-160)"; fi
+    rm -f "$p" "$h"
 }
 profile() {     # the profile from the control node, signed with this computer's key; applied when it is new
     local p h when sig code got sum
@@ -117,6 +231,8 @@ profile() {     # the profile from the control node, signed with this computer's
     else
         NETWORK=$(sed -n 's/^network //p' "$p" | tr -cd 'a-z0-9-'); NETWORK=${NETWORK:-kiwi}
         if apply "$p"; then echo "$sum" > "$st/profile.sum"; say "its profile is applied (${sum:0:12})"; fi
+        av=$(sed -n 's/^agent_version //p' "$p" | tr -cd '0-9')
+        if [ -n "$av" ] && [ "$av" -gt "$VERSION" ]; then renew "$av"; fi
     fi
     rm -f "$p" "$h"
 }
@@ -165,10 +281,19 @@ out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o "$resp" -w '%%{http_code}' 
 case $out in 200) ;; 000|"") out="000 $(tr '\n' ' ' < "$err" | cut -c1-160)" ;; *) out="$out $(head -c 160 "$resp" | tr -d '\n')" ;; esac
 fi
 [ "$out" = "$(cat /run/kiwi-client-agent.last 2>/dev/null)" ] || { say "report to $URL: $out"; echo "$out" > /run/kiwi-client-agent.last; }
+# how it is, for the app on this computer (kiwi-desktop) and anyone who looks: no secret in it
+mkdir -p -m 0755 /run/kiwi-client 2>/dev/null
+ok=$(sed -n 's/^ok //p' /run/kiwi-client/status 2>/dev/null); [ "$out" = 200 ] && ok=$now
+{ echo "name $NAME"; echo "control $URL"; echo "asked $now"; echo "answer $out"; [ -n "$ok" ] && echo "ok $ok"
+  grep -v '^kiwi-done ' "$body"; } > /run/kiwi-client/status.new 2>/dev/null && chmod 0644 /run/kiwi-client/status.new \
+  && mv -f /run/kiwi-client/status.new /run/kiwi-client/status
 if [ "$out" = 200 ]; then
     : > "$st/told"
     want=$(sed -n 's/^profile //p' "$resp" | head -n 1)
-    if [ -n "$want" ] && [ "$want" != "$(cat "$st/profile.sum" 2>/dev/null)" ]; then profile; fi
+    if [ -n "$want" ] && [ "$want" != "$(cat "$st/profile.sum" 2>/dev/null)" ]; then profile
+    elif [ -s "$st/unlock.slot" ] && [ -s "$st/unlock.json" ] && [ "$(sha256sum < "$st/unlock.json" | cut -d' ' -f1)" != "$(cat "$st/unlock.sum" 2>/dev/null)" ]; then
+        unlocked "$(cat "$st/unlock.json")"      # a new policy that waited for its rings
+    fi
     orders "$resp"
     # an order ran: what came of it goes at once, not with the next minute's report (once)
     if [ -s "$st/told" ] && [ -z "${KIWI_AGENT_AGAIN:-}" ]; then
@@ -271,7 +396,7 @@ def install_script(fleet, name, url, ca):
     if not ca.strip():
         raise KiwiError("the network's CA is not there (secrets/ca/kiwiCA.pem): render or apply once first")
     facts = FACTS % {"version": VERSION}
-    script = SCRIPT % {"dir": DIR}
+    script = SCRIPT % {"dir": DIR, "version": VERSION}
     return INSTALL % {"dir": DIR, "url": url, "name": name, "salt": salt(fleet), "ca": ca if ca.endswith("\n") else ca + "\n",
                       "facts": facts, "path": SCRIPT_PATH, "script": script, "unit": UNIT, "service": SERVICE, "timer": TIMER}
 
@@ -288,7 +413,7 @@ def parse(text):
             out["vpn"].append({"link": link[:32], "address": addr[:64]})
         elif k in ("uptime", "crypt", "clevis") and v.isdigit():
             out[k] = int(v)
-        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile"):
+        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile", "unlock"):
             out[k] = v[:200]
     return out
 
@@ -322,19 +447,25 @@ def rows(folder, clients, boxes=None, now=None):
     return out
 
 
-def request_signature(key_text, name, when):
-    """What signs a client's request for its profile: its name and the time."""
-    return hmac.new(key_text.encode(), ("client-profile\n%s\n%s" % (name, when)).encode(), hashlib.sha256).hexdigest()
+def request_signature(key_text, name, when, what="profile"):
+    """What signs a client's request for its profile (or its new agent): its name and the time."""
+    return hmac.new(key_text.encode(), ("client-%s\n%s\n%s" % (what, name, when)).encode(), hashlib.sha256).hexdigest()
 
 
-def check_request(key_text, name, when, sign, now=None):
+def agent_signature(key_text, name, body):
+    """What signs a new agent for the client, as profile_signature a profile."""
+    text = "agent\n%s\n%s" % (name, hashlib.sha256(body).hexdigest())
+    return hmac.new(key_text.encode(), text.encode(), hashlib.sha256).hexdigest()
+
+
+def check_request(key_text, name, when, sign, now=None, what="profile"):
     try:
         t = int(when)
     except (TypeError, ValueError):
         return "no time"
     if abs((now if now is not None else time.time()) - t) > SKEW:
         return "its clock and this one's are more than %d minutes apart" % (SKEW // 60)
-    if not hmac.compare_digest(request_signature(key_text, name, when), str(sign or "").strip().lower()):
+    if not hmac.compare_digest(request_signature(key_text, name, when, what), str(sign or "").strip().lower()):
         return "the signature is not this client's"
     return None
 
@@ -356,7 +487,7 @@ def vpn_conf_path(fleet, name):
     return fleet.resolve_path("secrets/devices/%s.conf" % name)
 
 
-def profile(fleet, name, linked=()):
+def profile(fleet, name, linked=(), unlock=None):
     """The client's profile, as the agent reads it: one fact a line. The network's CA; its VPN (a
     WireGuard config, as NetworkManager imports it) when it has a place on the VPN, with how much
     goes through it: `split` only the network (its names to its DNS, the Internet as it was), `full`
@@ -367,7 +498,7 @@ def profile(fleet, name, linked=()):
     tls = fleet.defaults.get("tls") or {}
     ca_path = os.path.join(fleet.resolve_path(tls.get("ca_dir") or "secrets/ca"), "kiwiCA.pem")
     lines = ["profile 1", "network %s" % re.sub(r"[^a-z0-9-]", "", domain.split(".")[0].lower()),
-             "connection %s" % connectmod.connection_name(domain)]
+             "connection %s" % connectmod.connection_name(domain), "agent_version %d" % VERSION]
     if os.path.isfile(ca_path):
         lines.append("ca " + base64.b64encode(util.read_bytes(ca_path)).decode())
     conf = vpn_conf_path(fleet, name)
@@ -376,6 +507,9 @@ def profile(fleet, name, linked=()):
         full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in data.decode(errors="replace").splitlines())
         lines += ["vpn " + base64.b64encode(data).decode(), "vpn_mode " + ("full" if full else "split"),
                   "search " + ",".join(["~" + domain] + ["~" + d for d in sorted(set(linked)) if d and d != domain])]
+    if unlock:          # its disk's policy (unlock_tree): kept bound by the agent once a person bound it
+        import json
+        lines.append("unlock " + base64.b64encode(json.dumps(unlock, sort_keys=True, separators=(",", ":")).encode()).decode())
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -396,3 +530,43 @@ def join_command(url, code, ca_b64):
     return ("c=$(mktemp); echo %s | base64 -d > \"$c\"; s=$(curl -sS --fail-with-body --cacert \"$c\" %s/api/client/join/%s); "
             "r=$?; rm -f \"$c\"; if [ $r = 0 ]; then printf '%%s\\n' \"$s\" | sudo sh; else printf '%%s\\n' \"$s\" >&2; false; fi"
             % (ca_b64, url, code))
+
+
+def unlock_tree(name, block, servers, facts):
+    """The clevis policy of a client's disk (docs/design/unlock.md, desktops; the switched rings of
+    the machines): every ring it names (or `threshold` of them), and with `switch` its own ring as
+    well, which the control node runs, stops or runs for a while: auto-unlock on, off, for N
+    minutes. None without rings. `servers`: unlock.ring_servers; `facts(server, ring)`: (thumbprint,
+    advertisement). A computer finds a ring at boot at its machine's fixed address at home, or
+    where `unlock.via` says."""
+    import json
+    from . import unlock as unlockmod
+    u = (block or {}).get("unlock") or {}
+    rings = [str(r) for r in (u.get("rings") or [])]
+    if not rings:
+        return None
+    via = u.get("via") or {}
+
+    def pin(ring):
+        if ring not in servers:
+            raise KiwiError("%s: no machine of this network serves the ring %s (the tang module's rings)" % (name, ring))
+        server, port = servers[ring]
+        if isinstance(server, unlockmod.OperatorRing):
+            raise KiwiError("%s: a computer opens with the network's rings, not with the operator's" % name)
+        lan = unlockmod._lan(server)
+        if via.get(ring):
+            where = str(via[ring])
+        elif lan and unlockmod._site(server) == str(u.get("site") or "home"):
+            where = "http://%s:%d" % (lan.ip, port)
+        else:
+            raise KiwiError("%s: the ring %s is on %s, which has no fixed address at home: unlock.via says where "
+                            "the computer finds it at boot" % (name, ring, server.name))
+        _thp, adv = facts(server, ring)
+        return {"url": where, "adv": json.loads(adv)}
+    t = int(u.get("threshold") or len(rings))
+    if not 1 <= t <= len(rings):
+        raise KiwiError("%s: unlock.threshold is between 1 and %d, its rings" % (name, len(rings)))
+    base = {"t": t, "pins": {"tang": [pin(r) for r in rings]}}
+    if u.get("switch"):
+        return {"t": 2, "pins": {"sss": [base], "tang": [pin(str(u["switch"]))]}}
+    return base

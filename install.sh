@@ -74,7 +74,12 @@ do_install() {
             find "$LIB/kit" -name '__pycache__' -type d -prune -exec rm -rf {} +
         fi
         install -Dm644 "$SRC/data/icons/$APP_ID.svg" "$LIB/$APP_ID.svg"
+        # kiwi-desktop: this computer in its network (a client's agent, docs/machines.md "People's computers")
+        install -Dm755 "$SRC/gui/kiwi-desktop" "$PREFIX/bin/kiwi-desktop"
+        install -Dm644 "$SRC/gui/kiwi_desktop_core.py" "$LIB/kiwi_desktop_core.py"
         mkdir -p "$SHARE/applications"
+        sed "s|^Exec=.*|Exec=$PREFIX/bin/kiwi-desktop|" "$SRC/data/kiwi-desktop.desktop" \
+            > "$SHARE/applications/eu.kiwinetwork.KiwiDesktop.desktop"
         sed "s|^Exec=.*|Exec=$PREFIX/bin/kiwi-server-gui|" "$SRC/data/kiwi-server.desktop" \
             > "$SHARE/applications/$APP_ID.desktop"
         install -Dm644 "$SRC/data/icons/$APP_ID.svg" \
@@ -103,6 +108,7 @@ do_update() { do_install; }
 
 do_uninstall() {
     say "removing kiwi-server"
+    rm -f "$PREFIX/bin/kiwi-desktop" "$SHARE/applications/eu.kiwinetwork.KiwiDesktop.desktop"
     rm -f "$PREFIX/bin/kiwi-server" "$PREFIX/bin/kiwi-server-gui" \
           "$SHARE/bash-completion/completions/kiwi-server" \
           "$SHARE/applications/$APP_ID.desktop" \

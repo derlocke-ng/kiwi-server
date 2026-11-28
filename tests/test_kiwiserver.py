@@ -16240,6 +16240,21 @@ class TestFirstRunPage(StoreBase):
         self.assertIn("NAME=pentest-1\n", script)
         self.assertEqual(self.ask("/api/client/join/" + code)[0], 410)               # once
         self.assertEqual(self.ask("/api/client/join/" + "x" * 32)[0], 410)
+        # a newer agent, asked with the client's key: the installer without the key, signed
+        req = urllib.request.Request(self.url + "/api/client/agent", headers={
+            "X-Kiwi-Client": "pentest-1", "X-Kiwi-Time": str(when),
+            "X-Kiwi-Sign": clientagent.request_signature(key, "pentest-1", when, "agent")})
+        with urllib.request.urlopen(req) as r:
+            new, sig = r.read(), r.headers.get("X-Kiwi-Sign")
+        self.assertEqual(sig, clientagent.agent_signature(key, "pentest-1", new))
+        self.assertIn(b"key=$(cat)", new)
+        self.assertNotIn(key.encode(), new)
+        req = urllib.request.Request(self.url + "/api/client/agent", headers={
+            "X-Kiwi-Client": "pentest-1", "X-Kiwi-Time": str(when),
+            "X-Kiwi-Sign": clientagent.request_signature(key, "pentest-1", when)})          # a profile's signature
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        e.exception.close()
         status, page, _ = self.ask("/devices/computer-join", {"csrf": csrf, "name": "pentest-1"}, cookie=cookie)
         self.assertIn("pentest-1: run this on it", page)
 

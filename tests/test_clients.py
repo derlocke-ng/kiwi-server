@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
@@ -67,10 +68,17 @@ class TestClientProfileAndOrders(unittest.TestCase):
         }
         for name, body in stubs.items():
             w("bin/" + name, "#!/bin/bash\n" + body % {"t": self.t}, 0o755)
-        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent"})
+        self.w("bin/lsblk", "exit 0\n", 0o755)          # no disk of this computer is ever looked at
+        # every path of the system the script touches lies in the test's folder
+        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent", "version": clientagent.VERSION})
                        .replace("/var/lib/kiwi-client", self.t + "/state")
                        .replace("/etc/pki/ca-trust/source/anchors", self.t + "/anchors")
+                       .replace("/usr/local/share/ca-certificates", self.t + "/no-certificates")
+                       .replace("/etc/default/grub.d", self.t + "/grub.d")
+                       .replace("/etc/systemd/system", self.t + "/units")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
+        for path in ("/etc/", "/usr/local/share", "/var/lib/"):
+            self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
 
     def answer(self, *lines):
         self.w("answer", "".join(line + "\n" for line in lines))
@@ -109,6 +117,60 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.run_agent()
         self.assertEqual((self.read("nm"), self.read("trust")), ("", ""))
 
+    def test_a_newer_agent_installs_itself_when_its_profile_says_so(self):
+        import hashlib
+        newer = self.profile.decode().replace("network home", "network home\nagent_version %d" % (clientagent.VERSION + 1)).encode()
+        self.w("profile", newer.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", newer))
+        self.answer("profile " + hashlib.sha256(newer).hexdigest())
+        installer = "cat > %s/run/installed-with-key\n" % self.t
+        self.w("agent.new", installer)
+        self.w("agent.sign", clientagent.agent_signature(KEY, "desk", installer.encode()))
+        curl = self.read("bin/curl").replace("case $u in */api/client/profile)",
+                                              'case $u in */api/client/agent) cp %(t)s/agent.new "$o"; printf "X-Kiwi-Sign: %%s\\r\\n" "$(cat %(t)s/agent.sign)" > "$h"; printf 200 ;;\n  */api/client/profile)' % {"t": self.t})
+        self.w("bin/curl", curl, 0o755)
+        self.run_agent()
+        self.assertEqual(self.read("run/installed-with-key"), KEY)          # the installer ran, the key on its stdin
+        self.assertIn("its agent is version %d now" % (clientagent.VERSION + 1), self.read("logged"))
+        # one not signed by the control node is left
+        os.remove(os.path.join(self.t, "run", "installed-with-key"))
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.w("agent.sign", clientagent.agent_signature("other", "desk", installer.encode()))
+        self.run_agent()
+        self.assertFalse(os.path.exists(os.path.join(self.t, "run", "installed-with-key")))
+        self.assertIn("its new agent is not signed by the control node", self.read("logged"))
+
+    def test_the_status_for_the_app_holds_no_secret(self):
+        self.answer()
+        self.run_agent()
+        status = self.read("run/kiwi-client/status")
+        self.assertIn("name desk\n", status)
+        self.assertIn("answer 200\n", status)
+        self.assertRegex(status, r"\nok \d+\n")
+        self.assertIn("os Test", status)
+        self.assertNotIn(KEY, status)
+        self.assertEqual(oct(os.stat(os.path.join(self.t, "run", "kiwi-client", "status")).st_mode & 0o777), "0o644")
+
+    def test_leave_takes_away_what_the_agent_put_there(self):
+        import hashlib
+        self.answer("profile " + hashlib.sha256(self.profile).hexdigest())
+        self.run_agent()                                                  # CA and VPN in place
+        self.w("conns", "kiwi-home\nkiwi-other\n")
+        path = os.path.join(self.t, "bin", "kiwi-client-agent")
+        script = self.script.replace('[ "$(id -u)" = 0 ] || { echo "as root: sudo $0 leave" >&2; exit 2; }', ":")
+        with open(path, "w") as f:
+            f.write(script)
+        self.w("bin/systemctl", "exit 0\n", 0o755)
+        r = subprocess.run([path, "leave"], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"]),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("connection delete kiwi-home", self.read("nm"))
+        self.assertNotIn("kiwi-other", self.read("nm"))                   # only the one it made
+        self.assertFalse(os.path.exists(os.path.join(self.t, "anchors", "kiwi-home.pem")))
+        self.assertFalse(os.path.exists(os.path.join(self.t, "agent")))
+        self.assertFalse(os.path.exists(path))
+        self.assertIn("has left the network", r.stdout)
+
     def test_a_profile_not_signed_by_the_control_node_is_left(self):
         import hashlib
         self.w("profile.sign", clientagent.profile_signature("another key", "desk", self.profile))
@@ -116,6 +178,54 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.run_agent()
         self.assertEqual((self.read("anchors/kiwi-home.pem"), self.read("nm")), ("", ""))
         self.assertIn("not signed by the control node", self.read("logged"))
+
+    def clevis_stub(self):
+        """clevis on a disk /dev/vda3: `luks list` from a file of slots, bind adds slot 2, pass and
+        unbind are written down."""
+        self.w("slots", "1: sss {}\n")
+        self.w("bin/clevis", 'echo "clevis $*" >> %(t)s/clevis\n'
+               'case "$1 $2" in "luks list") cat %(t)s/slots ;; "luks pass") echo the-old-key ;;'
+               ' "luks bind") cat > %(t)s/bind-key; echo "2: sss {}" >> %(t)s/slots ;;'
+               ' "luks unbind") grep -v "^$6:" %(t)s/slots > %(t)s/slots.new; mv %(t)s/slots.new %(t)s/slots ;; esac\n' % {"t": self.t}, 0o755)
+        self.w("bin/lsblk", "echo '/dev/vda3 crypto_LUKS'\n", 0o755)
+
+    def with_unlock(self, policy):
+        import base64
+        import hashlib
+        body = self.profile.decode().replace("ca ", "unlock %s\nca " % base64.b64encode(policy.encode()).decode(), 1).encode()
+        self.w("profile", body.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
+        self.answer("profile " + hashlib.sha256(body).hexdigest())
+
+    def test_a_disk_policy_waits_for_a_person_to_bind_it(self):
+        self.clevis_stub()
+        self.with_unlock('{"t":1,"pins":{"tang":[{"url":"http://192.168.2.30:7500"}]}}')
+        self.run_agent()
+        self.assertIn("192.168.2.30", self.read("state/unlock.json"))
+        self.assertIn("sudo kiwi-client-agent bind", self.read("logged"))
+        self.assertNotIn("luks bind", self.read("clevis"))                 # nothing bound without the person
+
+    def test_a_bound_disk_follows_its_policy_without_a_passphrase(self):
+        self.clevis_stub()
+        self.w("state/unlock.slot", "1\n")
+        self.w("state/unlock.sum", "an-older-policy\n")
+        self.with_unlock('{"t":1,"pins":{"tang":[{"url":"http://192.168.2.31:7500"}]}}')
+        self.run_agent()
+        said = self.read("clevis")
+        self.assertIn("luks pass -d /dev/vda3 -s 1", said)
+        self.assertIn("luks bind -y -k - -d /dev/vda3 sss", said)
+        self.assertEqual(self.read("bind-key"), "the-old-key")             # the key from the binding it had
+        self.assertIn("luks unbind -d /dev/vda3 -s 1 -f", said)
+        self.assertEqual(self.read("state/unlock.slot").strip(), "2")
+        # the policy taken away: the disk is unbound, its passphrase stays
+        self.with_unlock("")
+        self.w("profile", self.profile.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", self.profile))
+        import hashlib
+        self.answer("profile " + hashlib.sha256(self.profile).hexdigest())
+        self.run_agent()
+        self.assertIn("luks unbind -d /dev/vda3 -s 2 -f", self.read("clevis"))
+        self.assertEqual(self.read("state/unlock.slot"), "")
 
     def test_orders_update_and_profile_and_nothing_else(self):
         at = int(time.time())
@@ -141,6 +251,27 @@ class TestClientProfileAndOrders(unittest.TestCase):
         at = int(time.time())
         self.assertNotEqual(machineagent.order_signature(KEY, "desk", "a", "update", "-", at),
                             clientagent.order_signature(KEY, "desk", "a", "update", "-", at))
+
+    def test_the_disk_policy_from_the_rings_the_client_names(self):
+        import json
+        from kiwiserver import unlock as unlockmod
+        lime = types.SimpleNamespace(name="lime", cfg={"network": {"dhcp": False, "address": "192.168.2.64/16"}})
+        sorbet = types.SimpleNamespace(name="sorbet", cfg={"network": {"dhcp": True}})
+        servers = {"home": (lime, 7500), "infra": (lime, 7501), "desk": (lime, 7502), "far": (sorbet, 7500)}
+        facts = lambda server, ring: ("thp-" + ring, json.dumps({"ring": ring}))      # noqa: E731
+        self.assertIsNone(clientagent.unlock_tree("desk", {}, servers, facts))
+        tree = clientagent.unlock_tree("desk", {"unlock": {"rings": ["home", "infra"]}}, servers, facts)
+        self.assertEqual(tree, {"t": 2, "pins": {"tang": [{"url": "http://192.168.2.64:7500", "adv": {"ring": "home"}},
+                                                          {"url": "http://192.168.2.64:7501", "adv": {"ring": "infra"}}]}})
+        tree = clientagent.unlock_tree("desk", {"unlock": {"rings": ["home"], "switch": "desk"}}, servers, facts)
+        self.assertEqual((tree["t"], tree["pins"]["tang"][0]["url"]), (2, "http://192.168.2.64:7502"))   # its rings AND its own
+        with self.assertRaisesRegex(KiwiError, "no fixed address at home"):
+            clientagent.unlock_tree("desk", {"unlock": {"rings": ["far"]}}, servers, facts)
+        self.assertEqual(clientagent.unlock_tree("desk", {"unlock": {"rings": ["far"], "via": {"far": "http://203.0.113.7:7600"}}},
+                                                 servers, facts)["pins"]["tang"][0]["url"], "http://203.0.113.7:7600")
+        with self.assertRaisesRegex(KiwiError, "serves the ring nope"):
+            clientagent.unlock_tree("desk", {"unlock": {"rings": ["nope"]}}, servers, facts)
+        self.assertTrue(unlockmod.OperatorRing)
 
     def test_the_profile_says_split_or_full_from_the_config(self):
         import base64
@@ -189,7 +320,8 @@ class TestClientAgent(unittest.TestCase):
                       " --data-binary) b=${2#@}; shift ;; esac; shift; done\ncp \"$b\" %(t)s/run/sent; printf 200\n" % {"t": self.t}, 0o755)
         w("bin/logger", "#!/bin/bash\necho \"$*\" >> %s/run/logged\n" % self.t, 0o755)
         w("bin/flock", "#!/bin/bash\nexit 0\n", 0o755)
-        self.script = (clientagent.SCRIPT % {"dir": self.t + "/agent"}).replace("/run/kiwi-client-agent", self.t + "/run/kiwi-client-agent")
+        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent", "version": clientagent.VERSION})
+                       .replace("/run/kiwi-client", self.t + "/run/kiwi-client").replace("/var/lib/kiwi-client", self.t + "/state"))
 
     def run_agent(self):
         path = os.path.join(self.t, "bin", "kiwi-client-agent")
@@ -249,7 +381,7 @@ class TestClientAgent(unittest.TestCase):
         self.assertIn("-----END CERTIFICATE-----\nKIWI_EOF", s)
         self.assertNotIn(clientagent.key(f, "pentest-1"), s)           # the key comes on stdin
         self.assertIn("key=$(cat)", s)
-        for text in (s, clientagent.SCRIPT % {"dir": "/etc/kiwi-client"}, clientagent.FACTS % {"version": 1}):
+        for text in (s, clientagent.SCRIPT % {"dir": "/etc/kiwi-client", "version": 1}, clientagent.FACTS % {"version": 1}):
             r = subprocess.run(["bash", "-n"], input=text, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
         with self.assertRaisesRegex(KiwiError, "no control node"):

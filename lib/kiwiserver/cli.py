@@ -4874,8 +4874,18 @@ def cmd_client(args):
     agent that reports to the control node."""
     import yaml
     from . import clientagent, controlsync
-    fleet, _roles, ms = load(args, need_roles=False)
+    fleet, roles, ms = load(args, need_roles=args.action == "policy")
     have = clientagent.names(fleet)
+    if args.action == "policy":         # its disk's clevis policy, as its profile carries it (the control node asks)
+        if args.name not in have:
+            raise KiwiError("no client called %s" % args.name)
+
+        def resolve(h):
+            if h.role in roles:
+                rolesmod.resolve_settings(roles[h.role], h, ms)
+        servers = unlock.ring_servers(fleet, resolve)
+        print(json.dumps(clientagent.unlock_tree(args.name, have[args.name], servers, unlock.ring_facts) or {}))
+        return
     if args.action == "list":
         if not controlsync.remote_of(fleet.dir):
             raise KiwiError("the clients report to the control node: join it first (kiwi-server control join %s LINK)"
@@ -4963,8 +4973,8 @@ def cmd_client(args):
             if rc:
                 util.warn("%s's place on the VPN is still there: kiwi-server enroll %s %s --remove" % (name, typed_path(args.fleet), name))
         util.say("%s is no client any more: its reports are refused from now on%s" % (
-            name, "" if args.ssh else "; its agent stays on the computer until kiwi-server client remove %s %s --ssh … "
-                                      "takes it away (or remove /etc/kiwi-client there)" % (typed_path(args.fleet), name)))
+            name, "" if args.ssh else ". On the computer, sudo kiwi-client-agent leave takes away the agent and what it "
+                                      "put there (the VPN connection, the CA, the disk's binding)"))
         return
     raise KiwiError("kiwi-server client add|install|list|remove FLEET [NAME]")
 
@@ -7363,7 +7373,7 @@ def build_parser():
                    help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("client", cmd_client)
-    s.add_argument("action", choices=["add", "invite", "install", "list", "remove"])
+    s.add_argument("action", choices=["add", "invite", "install", "list", "remove", "policy"])
     s.add_argument("fleet")
     s.add_argument("name", nargs="?", help="the client: a person's computer (lowercase letters, digits, dashes)")
     s.add_argument("--here", action="store_true", help="install: on this computer (sudo asks for its password)")

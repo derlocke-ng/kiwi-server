@@ -2358,10 +2358,34 @@ class Control:
             fleet = config.Fleet.load(self.fleet_path)
             domain = str(fleet.defaults.get("domain") or "home")
             linked = [fedmod.seen(x)[1] for x in fedmod.partners(fleet.dir).values() if fedmod.seen(x)[1] and fedmod.seen(x)[1] != domain]
-            body = clientagent.profile(fleet, name, linked)
+            body = clientagent.profile(fleet, name, linked, self._client_unlock(fleet, name))
             return {"body": body.decode(), "sum": hashlib.sha256(body).hexdigest()}
         got = self._read_once("client-profile:" + name, make)
         return got["body"].encode(), got["sum"]
+
+    def _client_unlock(self, fleet, name):
+        """The clevis policy of a client's disk, or None: from `kiwi-server client policy` (it asks the
+        rings' machines over SSH). Its last good answer is kept: a switch ring that is stopped
+        (auto-unlock off) answers nothing, and the policy stays what it was."""
+        from . import clientagent
+        if not ((clientagent.names(fleet).get(name) or {}).get("unlock") or {}).get("rings"):
+            return None
+        keep = os.path.join(self.run, "client-unlock", name + ".json")
+        r = subprocess.run(list(self.kiwi) + ["client", "policy", self.fleet_path, name], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, cwd=self.fleet_dir, timeout=120)
+        try:
+            got = json.loads(r.stdout) if r.returncode == 0 else None
+        except ValueError:
+            got = None
+        if got:
+            os.makedirs(os.path.dirname(keep), mode=0o700, exist_ok=True)
+            util.write_text(keep, json.dumps(got) + "\n", 0o600)
+            return got
+        try:
+            return json.loads(util.read_text(keep))
+        except (OSError, ValueError):
+            util.warn("control: the disk policy of %s: %s" % (name, ((r.stderr or "").strip().splitlines() or ["no answer"])[-1][:200]))
+            return None
 
     def client_profile(self, name, when, sign):
         """(profile, its signature) for a client that asks with its own key; else (None, why not)."""
@@ -2376,6 +2400,24 @@ class Control:
             return None, why
         body, _sum = self._client_profile(name)
         return body, clientagent.profile_signature(key, name, body)
+
+    def client_agent(self, name, when, sign):
+        """(the newest agent's installer, its signature) for a client that asks with its own key
+        (its profile names a newer version); else (None, why not). The key is not in it: the agent
+        that asks runs it with its own key on stdin."""
+        from . import clientagent, config, machineagent
+        if self.locked():
+            return None, "the control node is locked"
+        key = self._client_keys().get(name) if clientagent.NAME.match(name or "") else None
+        if not key:
+            return None, "no such client"
+        why = clientagent.check_request(key, name, when, sign, now=self.clock(), what="agent")
+        if why:
+            return None, why
+        fleet = config.Fleet.load(self.fleet_path)
+        body = clientagent.install_script(fleet, name, machineagent.url(fleet, self._modules()),
+                                          util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem"))).encode()
+        return body, clientagent.agent_signature(key, name, body)
 
     def client_answer(self, name, body):
         """What a client's agent is told after its report was taken: which profile is its own, and

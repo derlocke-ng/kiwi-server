@@ -12,6 +12,8 @@
 # Needs: FLEET's store open and joined to a control node of 2.332.0 or later; the install pulls
 # SYSTEM's image from its registry (some gigabytes). The disk's passphrase is the drill's test
 # value, on the stick. KIWI_SERVER: the kiwi-server to use. One PASS or FAIL line per check.
+# phoenix (clevis in its boot system): KIWI_UNLOCK=1 (the default) binds its disk to the ring RING
+# (home) and starts it again with nobody at its prompt.
 set -u
 fleet=${1:?the fleet file}; base=${2:?a Fedora installer ISO}; name=${3:-desk-iso}; system=${4:-bluefin}
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -124,5 +126,33 @@ if [ -z "$got" ]; then      # what the computer says, before the VM goes off
 fi
 case ${got#*|} in *[Bb]luefin*|*Fedora*|*Silverblue*) rc=0 ;; *) rc=1 ;; esac
 check $rc "its system: ${got#*|}"
+
+# ---- phoenix: its disk bound once with its passphrase to the network's ring RING (home: on lime),
+# then started without anyone at its prompt: the ring opens it (clevis is in the image's boot system)
+case $system in phoenix*) if [ "${KIWI_UNLOCK:-1}" = 1 ] && [ -n "$got" ]; then
+    ring=${RING:-home}
+    PYTHONPATH="$here/lib" python3 -c '
+import sys
+from kiwiserver import fleettext, util
+path, name, ring = sys.argv[1:4]
+new = fleettext.put(util.read_text(path), ["clients", name], {"unlock": {"rings": [ring]}})
+if not new:
+    sys.exit("the fleet file could not be changed in place")
+util.write_text(path, new, 0o600)' "$fleet" "$name" "$ring" && "$KIWI" control push "$fleet" >/dev/null 2>&1
+    check $? "$name's disk is to open by the network's ring $ring"
+    "$KIWI" control order "$fleet" "$name" profile >/dev/null 2>&1
+    n=24; while [ "$n" -gt 0 ]; do vssh "grep -qx 'unlock waits' /run/kiwi-client/status" 2>/dev/null && break; vssh "sudo kiwi-client-agent now" >/dev/null 2>&1; sleep 5; n=$((n - 1)); done
+    [ "$n" -gt 0 ]; check $? "its agent says the disk waits to be bound"
+    printf '%s' "$PASS_PHRASE" | vssh "sudo /usr/local/sbin/kiwi-client-agent bind --stdin" > "$w/bind.log" 2>&1; rc=$?
+    check $rc "bound with its passphrase$([ $rc = 0 ] || echo ": $(tail -n 2 "$w/bind.log" | tr '\n' ' ' | cut -c1-160)")"
+    grep -q "already" "$w/bind.log"; check $? "nothing layered: clevis was in the image ($(head -n 1 "$w/bind.log" | cut -c1-80))"
+    vssh "sudo systemctl poweroff" >/dev/null 2>&1
+    n=60; while [ "$n" -gt 0 ] && vm_running; do sleep 2; n=$((n - 1)); done
+    vm_stop; vh 'rm -f qemu.pid'
+    vm_start ring.log
+    t0=$(date +%s); up_within 300; rc=$?
+    check $rc "it opens by the network's ring $ring, nobody at its prompt ($(( $(date +%s) - t0 )) s)"
+    [ $rc = 0 ] || say "        its console: $(vh 'tail -c 2000 ring.log' | tr -d '\033' | tr '\r' '\n' | grep -v '^\s*$' | tail -n 3 | tr '\n' ' ' | cut -c1-200)"
+fi ;; esac
 [ "$fails" = 0 ] && say "all passed" || say "$fails wrong"
 exit $((fails > 0))

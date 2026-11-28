@@ -3,6 +3,10 @@
 Written 22 November 2026 for a move in the week after. The owner decides every step on the live
 v1 network (its master, the M1, sh3, the old kiwi-node); nothing there is touched without his yes.
 
+**28 Nov 2026:** the map of machines, clients and services, and the order, are in
+[migration-map.md](migration-map.md). Nextcloud starts fresh there and the old data is imported by
+hand; the AIO takeover below stays as a record.
+
 ## Where it ends up
 
 | Machine | Hardware | Runs |

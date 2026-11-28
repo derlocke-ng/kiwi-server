@@ -75,8 +75,9 @@ L: days. New ideas go to the end of their section.
        And (2.321.0) systemd no longer reads its units again for nothing: 17 reloads per apply
        became none (Rock Pi 67 s to 43 s, quince 29 s to 21 s, lychee 14 s to 10 s); and a Debian
        machine fetches its package lists once a day, not with every apply (2.322.0: Rock Pi 24 s).
-       Left: the disk-key tests on an encrypted machine (two calls, 4 s, slow by design) and
-       about fifteen small calls after the role (3 s).
+       The disk-key tests on an encrypted machine are kept with a sum of the disk's header
+       (2.324.0), and firewalld is asked over D-Bus (2.323.0).
+       Left: about fifteen small calls after the role (2-3 s).
     b. A rollout by the control node. First step done (2.316.0): `apply --careful`, one machine
        after the other, the least important first, its sites asked, the first failure stops it.
        The proxy's config is checked before (2.317.0): on the machine, by every apply, before

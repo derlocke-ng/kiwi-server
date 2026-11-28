@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.324.0 — the disk's key is asked again only when something changed
+
+- Each apply of an encrypted machine asked whether the disk's key on record still opens its
+  disk, and on uCore whether its key for the console is there: each question goes through the
+  key derivation, which takes seconds on purpose (1.8 s on a virtual machine, 3.7 s on a Rock
+  Pi). Once the key opened a disk, the device and a sum of the disk's LUKS header are kept in
+  `secrets/luks/<machine>.opens` (a sum of the key, never the key). While the key and the
+  header are the same the answer is the same; a new key, a new binding or any other change of
+  the header writes the header anew, and the key is asked again. An apply that changes nothing:
+  16.4 s became 13.1 s on a uCore machine, 23.5 s became 21.6 s on a Rock Pi E.
+
 ## 2.323.0 — firewalld is asked over D-Bus
 
 - The firewall steps of an apply asked firewalld up to seven times with `firewall-cmd`, which

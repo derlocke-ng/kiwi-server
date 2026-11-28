@@ -13,6 +13,7 @@ line. Design: docs/design/control-plane.md, Secrets.
 """
 import hashlib
 import os
+import re
 import secrets
 import sys
 
@@ -31,6 +32,45 @@ umask 077
 d=$(mktemp -d /run/kiwi-luks.XXXXXX) || exit 1
 trap 'rm -rf "$d"' EXIT
 '''
+
+# Whether a key opens a disk is asked of its key derivation, which takes seconds by design (two
+# such questions were 4 of an apply's 16 seconds on a uCore machine, one 3.7 of 24 on a Rock Pi).
+# Once it did, the device and a sum of its LUKS header are kept here (secrets/luks/<host>.opens):
+# while the key and the header are the same, so is the answer. A change of a key, a binding or
+# anything else in the header writes it anew, and the key itself is asked again.
+HEADSUM = r'''
+headsum() { cryptsetup luksDump "$1" 2>/dev/null | sha256sum | cut -c1-32; }
+kdev=${known%% *}; ksum=${known#* }
+still() { [ -n "$known" ] && [ -b "$kdev" ] && [ "$(headsum "$kdev")" = "$ksum" ]; }
+'''
+
+
+def opens_path(host):
+    return _path(host.fleet, host.name, "opens")
+
+
+def _mark(key):
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def known_opens(host, key):
+    """'DEVICE HEADERSUM' of the disk this key opened the last time it was asked, or ''."""
+    if getattr(host, "fleet", None) is None:
+        return ""
+    parts = _read(opens_path(host)).split()
+    return " ".join(parts[1:3]) if len(parts) == 3 and parts[0] == _mark(key) else ""
+
+
+def keep_opens(host, key, said):
+    """From a script's answer ('device DEV' or 'already DEV', then 'header SUM'): kept for the next time."""
+    m = re.search(r"^(?:device|already|added) (\S+)\s*\nheader ([0-9a-f]{32})\s*$", said, re.M)
+    if not m or getattr(host, "fleet", None) is None:
+        return
+    line = "%s %s %s" % (_mark(key), m.group(1), m.group(2))
+    if _read(opens_path(host)) != line:
+        util.guard_store_dir(os.path.dirname(opens_path(host)))
+        util.write_bytes(opens_path(host), line.encode(), 0o600)
+
 
 # stdin: the one-time key, the key to replace it with, the key last given (may be empty).
 # stdout: swapped|already|current <device>, or none.

@@ -66,13 +66,20 @@ if [ -n "$changed" ]; then
 fi
 ''' % DEBIAN_PACKAGES
 
-# stdin: the disk's key. stdout: `device DEV` and what is bound to it, or none.
+# stdin: the disk's key, what it opened the last time (luks.known_opens, may be empty). stdout:
+# `device DEV`, `header SUM` and what is bound to it, or none.
 LIST_SCRIPT = luks._PRELUDE + r'''
-IFS= read -r key
+IFS= read -r key; IFS= read -r known
 printf %s "$key" > "$d/key"
+''' + luks.HEADSUM + r'''
+if still; then
+    echo "device $kdev"; echo "header $ksum"
+    clevis luks list -d "$kdev" 2>/dev/null
+    exit 0
+fi
 for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
     cryptsetup open --test-passphrase --key-file="$d/key" "$dev" >/dev/null 2>&1 || continue
-    echo "device $dev"
+    echo "device $dev"; echo "header $(headsum "$dev")"
     clevis luks list -d "$dev" 2>/dev/null
     exit 0
 done
@@ -119,18 +126,23 @@ echo "grown $(( (room - have) / 1048576 ))"
 
 
 # On CoreOS Ignition binds the disk at the first boot and nobody ever had a key for it.
-# This adds one a person can type, opened with the ring's own share. stdin: the new key.
+# This adds one a person can type, opened with the ring's own share. stdin: the new key, what it
+# opened the last time (may be empty). stdout: already|added DEV, header SUM; or none.
 ADD_KEY_SCRIPT = luks._PRELUDE + r'''
-IFS= read -r key
+IFS= read -r key; IFS= read -r known
 printf %s "$key" > "$d/new"
+''' + luks.HEADSUM + r'''
+if still; then echo "already $kdev"; echo "header $ksum"; exit 0; fi
 for dev in $(blkid -c /dev/null -t TYPE=crypto_LUKS -o device); do
-    if cryptsetup open --test-passphrase --key-file="$d/new" "$dev" >/dev/null 2>&1; then echo "already $dev"; exit 0; fi
+    if cryptsetup open --test-passphrase --key-file="$d/new" "$dev" >/dev/null 2>&1; then
+        echo "already $dev"; echo "header $(headsum "$dev")"; exit 0
+    fi
     slot=$(clevis luks list -d "$dev" 2>/dev/null | sed -n 's/^\([0-9]*\):.*/\1/p' | head -1)
     [ -n "$slot" ] || continue
     clevis luks pass -d "$dev" -s "$slot" > "$d/old" || exit 1
     cryptsetup luksAddKey --batch-mode --key-file="$d/old" "$dev" "$d/new" || exit 1
     cryptsetup open --test-passphrase --key-file="$d/new" "$dev" >/dev/null 2>&1 || exit 1
-    echo "added $dev"; exit 0
+    echo "added $dev"; echo "header $(headsum "$dev")"; exit 0
 done
 echo none
 '''
@@ -915,7 +927,10 @@ def _coreos_key(host, tgt, servers):
     Reading the binding takes the ring, so a ring only we can reach is forwarded in."""
     key = luks.current_key(host) or luks.make_key(host)
     options = ["-R", _forward(host, servers)[1]] if _forwarded_rings(host) else []
-    out = remote.run(tgt, ADD_KEY_SCRIPT, (key + "\n").encode(), options=options).decode(errors="replace").split()
+    said = remote.run(tgt, ADD_KEY_SCRIPT, ("%s\n%s\n" % (key, luks.known_opens(host, key))).encode(),
+                      options=options).decode(errors="replace")
+    luks.keep_opens(host, key, said)
+    out = said.split()
     state = out[0] if out else "none"
     if state == "added":
         util.say("%s: the disk has a key for the console now, in %s" % (host.name, luks.key_file(host)))
@@ -1070,12 +1085,18 @@ def rings_bound(host, tgt):
     key = luks.current_key(host)
     if not key:
         return []
-    listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
-    return [b for b in _bound(listing) if b[2] != ["tpm2"]]
+    return [b for b in _bound(_listing(host, tgt, key)) if b[2] != ["tpm2"]]
+
+
+def _listing(host, tgt, key):
+    """LIST_SCRIPT's answer, with what the key opened the last time, and kept for the next."""
+    listing = remote.run(tgt, LIST_SCRIPT, ("%s\n%s\n" % (key, luks.known_opens(host, key))).encode()).decode(errors="replace")
+    luks.keep_opens(host, key, listing)
+    return listing
 
 
 def _rebind(host, tgt, key, wanted_tree, force=False):
-    listing = remote.run(tgt, LIST_SCRIPT, (key + "\n").encode()).decode(errors="replace")
+    listing = _listing(host, tgt, key)
     if not listing.startswith("device "):
         raise KiwiError("%s: no disk on the machine opens with the key on record" % host.name)
     dev = listing.split()[1]

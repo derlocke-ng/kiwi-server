@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# A person's computer as a client (docs/design/clients.md, the first step): the Debian GNOME desktop
-# VM of desktop-clevis-vm.sh joins FLEET as client NAME, its agent reports to the control node, and
-# `kiwi-server client list` shows it with its system, its box and its disk. A report signed with
-# another key is refused. Afterwards the agent is gone from the VM and NAME from the fleet file.
+# A person's computer as a client (docs/design/clients.md): the Debian GNOME desktop VM of
+# desktop-clevis-vm.sh is added to FLEET as client NAME with a place on the VPN, and joins by the
+# one-time command the control page shows. Its agent reports (`client list` shows its system, its
+# box, its disk), applies its profile (the network's CA in the system's trust, the VPN as a
+# NetworkManager connection that carries the mesh) and takes an order. A report signed with another
+# key is refused, a join command works once. Afterwards the agent, the connection and the CA are
+# gone from the VM, NAME from the fleet file and from the VPN. KIWI_ORDER=1: an update order too.
 #
 #   [VMHOST=sh3] tests/drills/client-agent-vm.sh FLEET [NAME]
 #   e.g. tests/drills/client-agent-vm.sh ~/kiwi/fleet.yaml desk-vm
 #
 # Needs: the VM installed and bound by desktop-clevis-vm.sh (its folder ~/kiwi-vm/desktop/debian
-# and its disk on VMHOST), FLEET's secret store open, FLEET joined to a control node of 2.329.0 or
+# and its disk on VMHOST), FLEET's secret store open, FLEET joined to a control node of 2.330.0 or
 # later. KIWI_SERVER: the kiwi-server to use (default: the installed one). One PASS or FAIL line
 # per check.
 set -u
@@ -26,6 +29,8 @@ KEY=$w/fleet/secrets/admin_ed25519
 before=$(mktemp "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kiwi-fleet.XXXXXX") || exit 2      # in memory, never on a disk
 done_() {
     vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")" 2>/dev/null
+    vssh "sudo sh -c 'nmcli connection delete kiwi-home >/dev/null 2>&1; rm -f /usr/local/share/ca-certificates/kiwi-home.crt; update-ca-certificates >/dev/null 2>&1; true'" 2>/dev/null
+    "$KIWI" client remove "$fleet" "$name" >/dev/null 2>&1        # still there when the drill stopped half-way: off the VPN too
     [ -s "$before" ] && ! cmp -s "$before" "$fleet" && cp "$before" "$fleet" && "$KIWI" control push "$fleet" >/dev/null 2>&1
     vssh "sudo sed -i '/ # kiwi-client-drill\$/d' /etc/hosts" 2>/dev/null
     rm -f "$before"; desk_cleanup
@@ -42,8 +47,8 @@ up_within 300; rc=$?; check $rc "the desktop VM is up (its disk opened by its ri
 
 "$KIWI" control pull "$fleet" >/dev/null 2>&1 || true
 cp "$fleet" "$before"
-"$KIWI" client add "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1
-check $? "$name is a client of the fleet, and the control node has it"
+"$KIWI" client add "$fleet" "$name" --vpn >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1
+check $? "$name is a client of the fleet with a place on the VPN, and the control node has it"
 url=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import config, machineagent, modules
@@ -60,17 +65,11 @@ say "        $host at $addr in the VM's /etc/hosts"
 # the VM's clock as this computer's: a report more than five minutes off is refused (its own clock
 # ran 23 minutes ahead, 28 Nov 2026)
 vssh "sudo date -u -s @$(date +%s) >/dev/null"; check $? "the VM's clock set from this computer's"
-script=$(PYTHONPATH="$here/lib" python3 -c '
-import sys
-from kiwiserver import clientagent, config, util
-f = config.Fleet.load(sys.argv[1])
-print(clientagent.install_script(f, sys.argv[2], sys.argv[3], util.read_text(f.resolve_path("secrets/ca/kiwiCA.pem"))))' "$fleet" "$name" "$url")
-key=$(PYTHONPATH="$here/lib" python3 -c '
-import sys
-from kiwiserver import clientagent, config
-print(clientagent.key(config.Fleet.load(sys.argv[1]), sys.argv[2]), end="")' "$fleet" "$name")
+command=$("$KIWI" client invite "$fleet" "$name" 2>/dev/null)
+case $command in *"/api/client/join/"*"| sudo sh"*) rc=0 ;; *) rc=1 ;; esac; check $rc "the control node makes its one-time join command"
 installed=$(date +%s)
-printf '%s' "$key" | vssh "sudo sh -c $(printf '%q' "$script")"; check $? "the agent is put on the VM"
+vssh "bash -c $(printf '%q' "$command")" >/dev/null; check $? "the command run on the VM puts the agent on it"
+vssh "bash -c $(printf '%q' "$command")" >/dev/null 2>&1; [ $? != 0 ]; check $? "the same command a second time does nothing"
 vssh "sudo stat -c '%a %U' /etc/kiwi-client/key" | grep -qx "600 root"; check $? "its key is root's alone"
 
 n=24; row=
@@ -91,6 +90,23 @@ IFS='|' read -r os box crypt clevis agent <<<"$row"
 case $os in *Debian*) true ;; *) false ;; esac; check $? "its system: ${os:-?}"
 [ ${#box} = 16 ]; check $? "the box it runs on, as a salted sum: ${box:-none}"
 [ "${crypt:-0}" -ge 1 ] && [ "${clevis:-0}" -ge 1 ]; check $? "its disk: ${crypt:-?} encrypted, ${clevis:-?} bound to rings"
+n=24; while [ "$n" -gt 0 ]; do vssh "test -s /var/lib/kiwi-client/profile.sum" 2>/dev/null && break; sleep 5; n=$((n - 1)); done
+[ "$n" -gt 0 ]; check $? "its profile is applied"
+vssh "test -s /usr/local/share/ca-certificates/kiwi-home.crt || test -s /etc/pki/ca-trust/source/anchors/kiwi-home.pem"
+check $? "the network's CA is in the VM's trust store"
+vssh "nmcli -t -f NAME connection show --active | grep -qx kiwi-home"; check $? "its VPN connection kiwi-home is up"
+mesh=$(PYTHONPATH="$here/lib" python3 -c '
+import sys
+from kiwiserver import config
+f = config.Fleet.load(sys.argv[1]); m = [h for h in f.hosts.values() if h.role == "master"][0]
+print((m.role_settings.get("vpn_ip") if m.role_settings else "") or (m.cfg.get("vpn_ip") or "10.9.0.1"))' "$fleet" 2>/dev/null)
+vssh "ip -o route get ${mesh:-10.9.0.1}" | grep -q "dev kiwi-home"; check $? "the mesh (${mesh:-10.9.0.1}) goes through it"
+vssh "ip -o route get 1.1.1.1" | grep -qv "dev kiwi-home"; check $? "the Internet does not (only the network through the VPN)"
+"$KIWI" control order "$fleet" "$name" profile > "$before.log" 2>&1; rc=$?
+check $rc "an order to apply its profile came back done$([ $rc = 0 ] || echo ": $(tail -n 1 "$before.log" | cut -c1-160)")"
+if [ "${KIWI_ORDER:-0}" = 1 ]; then
+    "$KIWI" control order "$fleet" "$name" update > "$before.log" 2>&1; check $? "an update order: $(tail -n 1 "$before.log" | cut -c1-120)"
+fi
 said() { vssh "sudo journalctl -t kiwi-client-agent --since '-10 min' --no-pager -o cat" 2>/dev/null; }
 said | grep -q "report to $url: 200"; rc=$?; check $rc "the VM's journal says the control node took it"
 [ $rc = 0 ] || said | tail -n 5 | sed 's/^/          /' | cut -c1-200
@@ -99,7 +115,8 @@ vssh "sudo sh -c 'cp /etc/kiwi-client/key /run/kiwi-key.keep; printf other > /et
 said | grep -q "report to $url: 403 .*not this client"; rc=$?; check $rc "a report signed with another key is refused (403, not this client's)"
 [ $rc = 0 ] || said | tail -n 5 | sed 's/^/          /' | cut -c1-200
 
-"$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file again"
+"$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file and off the VPN again"
+vssh "sudo sh -c 'nmcli connection delete kiwi-home >/dev/null 2>&1; rm -f /usr/local/share/ca-certificates/kiwi-home.crt /etc/pki/ca-trust/source/anchors/kiwi-home.pem; update-ca-certificates >/dev/null 2>&1 || update-ca-trust >/dev/null 2>&1; true'"
 vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")"
 vssh "! test -e /etc/kiwi-client && ! test -e /usr/local/sbin/kiwi-client-agent"; check $? "the agent is gone from the VM"
 cmp -s "$before" "$fleet"; check $? "the fleet file is as it was"

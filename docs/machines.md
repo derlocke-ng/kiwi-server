@@ -414,27 +414,52 @@ it: see [The control node](control.md#logins) and
 ## People's computers
 
 A person's computer (a desktop, a laptop, a pentest system on a portable SSD) can be a client of
-the network: listed in the fleet file, with an agent on it that tells the control node how it is,
-once a minute. A client is the installed system, not the box. The same SSD booted on two machines
-is one client on two boxes. What comes next is in the [design](design/clients.md).
+the network. An agent on it tells the control node once a minute how the computer is, puts the
+network's CA and VPN on it, and updates it when you ask. A client is the installed system, not
+the box: the same SSD booted on two machines is one client on two boxes. The
+[design](design/clients.md) says what comes next.
+
+**Add one on the control page:** Devices, *Add a computer*. Give it a name, and leave *A place on
+the VPN* ticked for a computer that goes out of the house. A pentest system belongs in a VPN
+group of its own, which reaches the Internet and nothing at home. The page shows one command.
+Run it in a terminal on that computer, at home or on the VPN. It asks for the computer's password
+(`sudo`) and puts the agent on it. The command works once, within a day, and carries the
+network's CA, so the computer checks that it talks to your control node. kiwi-server need not be
+on the computer.
+
+**Or from this computer:**
 
 ```bash
-kiwi-server client add fleet.yaml desk
+kiwi-server client add fleet.yaml desk --vpn
 kiwi-server control push fleet.yaml
 kiwi-server client install fleet.yaml desk --here
-kiwi-server client list fleet.yaml
 ```
 
-`add` writes `clients: {desk: {}}` into the fleet file. `install --here` puts the agent on this
-computer (`sudo` asks for your password); `--ssh USER@ADDRESS` puts it on another one. The
-agent reports to the control node, signed with a key of the client's own. Its report says which
-box it runs on (a sum of the board's id, salted for this network), its system, its VPN links,
-whether its disk is encrypted and bound to rings, and its pending updates. `list` shows the
-clients with their last report. `remove` takes a client out of the fleet file, and with `--ssh`
-its agent off the computer.
+`--vpn` gives it its place on the VPN (`--group` its group; `--full` sends everything through the
+VPN, not only the network). `install --here` puts the agent on this computer (`sudo` asks for
+your password); `--ssh USER@ADDRESS` puts it on another one. `client invite fleet.yaml NAME` prints
+the one-time command, as the page shows it. `client list` shows the clients with their last
+report. `client remove` takes a client out of the fleet file and off the VPN, and with `--ssh`
+the agent off the computer.
 
-This is the first step: the agent reports. It takes no orders yet and changes nothing on the
-computer.
+**What the agent does:**
+
+- It reports which box it runs on (a sum of the board's id, salted for this network), its
+  system, its VPN links, whether its disk is encrypted and bound to rings, and its pending
+  updates. The Devices page lists them under *Computers that report*, with the machine of the
+  network whose hardware a computer runs on.
+- It applies its profile when the network changes it: the network's CA in the system's trust
+  store, and its VPN as a NetworkManager connection named after the network (`kiwi-home` for
+  `home`) that comes up by itself. Only the
+  network goes through it, and only the network's names are asked there, unless the computer
+  was added with everything through the VPN.
+- It takes two orders: *Update now* (rpm-ostree or apt) and *Apply its profile*, buttons on the
+  Devices page, or `kiwi-server control order fleet.yaml NAME update`. Nothing else, never a
+  command.
+
+Everything it sends and gets is signed with a key of its own. Nothing listens on the computer.
+Taking the agent away leaves the VPN connection and the CA where they are; remove them in the
+computer's network settings, if you want them gone.
 
 ## Remove a machine
 

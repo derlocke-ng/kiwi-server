@@ -91,7 +91,11 @@ grep -q "^Icon=$app$" "$HOME/.local/share/applications/$app.desktop"
 test -f "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"
 for size in 48 64 128 256 512; do test -f "$HOME/.local/share/icons/hicolor/${size}x${size}/apps/$app.png"; done
 cmp -s "$repo/data/icons/$app.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"
+# and kiwi-desktop beside it: the app finds its core and the kit in kiwi-server's lib folder
+test -x "$HOME/.local/bin/kiwi-desktop" && test -f "$HOME/.local/lib/kiwi-server/kiwi_desktop_core.py"
+grep -q "^Exec=$HOME/.local/bin/kiwi-desktop" "$HOME/.local/share/applications/eu.kiwinetwork.KiwiDesktop.desktop"
 bash "$repo/install.sh" uninstall --purge >/dev/null
+test ! -e "$HOME/.local/bin/kiwi-desktop"
 test ! -e "$HOME/.local/bin/kiwi-server-gui"
 test ! -e "$HOME/.local/share/applications/$app.desktop"
 test ! -e "$HOME/.local/share/icons/hicolor/scalable/apps/$app.svg"

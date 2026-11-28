@@ -90,13 +90,28 @@ if [ "${1:-}" = bind ]; then
         command -v clevis >/dev/null 2>&1 || { echo "no rpm-ostree, no apt-get here: install clevis with its boot-system part, then run this again" >&2; exit 2; }
     fi
     before=$(slots "$dev")
-    echo "the disk's passphrase now ($dev):"
-    clevis luks bind -y -d "$dev" sss "$(cat "$st/unlock.json")" || exit 1
+    if [ "${2:-}" = --stdin ]; then      # the app: the passphrase on stdin, from its own field
+        clevis luks bind -y -k - -d "$dev" sss "$(cat "$st/unlock.json")" || exit 1
+    else
+        echo "the disk's passphrase now ($dev):"
+        clevis luks bind -y -d "$dev" sss "$(cat "$st/unlock.json")" || exit 1
+    fi
     slots "$dev" | comm -13 <(printf '%%s\n' "$before") - | head -n 1 > "$st/unlock.slot"
     sha256sum < "$st/unlock.json" | cut -d' ' -f1 > "$st/unlock.sum"
     command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u -k all >/dev/null 2>&1
     echo "bound: from the next start the disk opens by the network's rings, and still by its passphrase"
     exit 0
+fi
+if [ "${1:-}" = update ]; then          # the system's update now, as the order does (the app's button)
+    [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 update" >&2; exit 2; }
+    if command -v rpm-ostree >/dev/null 2>&1; then exec systemd-run --quiet --collect --unit=kiwi-update-now --wait rpm-ostree upgrade
+    elif command -v apt-get >/dev/null 2>&1; then exec systemd-run --quiet --collect --unit=kiwi-update-now --wait \
+        --setenv=DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update -q && apt-get upgrade -y -q'
+    fi
+    echo "no rpm-ostree, no apt-get here" >&2; exit 2
+fi
+if [ "${1:-}" = now ]; then             # report now, not with the next minute (the app's Refresh)
+    exec systemctl start kiwi-client-agent.service
 fi
 if [ "${1:-}" = leave ]; then
     # this computer leaves the network: everything the agent put on it goes, the agent last

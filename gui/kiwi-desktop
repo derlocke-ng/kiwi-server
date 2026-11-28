@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""kiwi-desktop — this computer in its Kiwi network (docs/design/clients.md).
+
+A small window over the network's agent on this computer: is it in the network, does the network
+hear from it, is its VPN up, does its disk open by the network's rings, are updates waiting. Join,
+bind the disk, update now and leave go to the agent as root through polkit. Without an agent it
+offers to join. The agent works without this app; this app does nothing the agent does not.
+"""
+import os
+import sys
+import time
+
+# the kit and kiwi_desktop_core: installed in kiwi-server's lib folder (install.sh), in a checkout beside this
+_here = os.path.dirname(os.path.realpath(__file__))
+for _d in (os.path.join(_here, "..", "lib", "kiwi-server"), _here):
+    if os.path.isfile(os.path.join(_d, "kiwi_desktop_core.py")):
+        sys.path.insert(0, _d)
+        break
+
+import gi  # noqa: E402
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+import kiwi_desktop_core as core  # noqa: E402
+from kit import geometry as kit_geometry  # noqa: E402
+from kit import header as kit_header  # noqa: E402
+from kit import worker  # noqa: E402
+from kit.info import AppInfo  # noqa: E402
+
+VERSION = "0.1.0"
+INFO = AppInfo(app="kiwi-desktop", app_id="eu.kiwinetwork.KiwiDesktop", name="Kiwi Network", version=VERSION,
+               description="This computer in its Kiwi network", glyph="network",
+               homepage="https://github.com/derlocke-ng/kiwi-server",
+               docs="https://github.com/derlocke-ng/kiwi-server/blob/main/docs/machines.md#peoples-computers",
+               default_size=(560, 720), min_size=(360, 420))
+CSS = b"""
+.kd-dot { min-width: 10px; min-height: 10px; border-radius: 999px; }
+.kd-dot.ok { background: @success_bg_color; } .kd-dot.warn { background: @warning_bg_color; }
+.kd-dot.bad { background: @error_bg_color; }
+"""
+
+
+def dot(level):
+    d = Gtk.Box(valign=Gtk.Align.CENTER)
+    d.add_css_class("kd-dot")
+    d.add_css_class(level)
+    return d
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title=INFO.name)
+        kit_geometry.restore(self, INFO)
+        self.connect("close-request", lambda *_a: (kit_geometry.remember(self, INFO), False)[1])
+        self.header = kit_header.build(self, INFO, on_refresh=self.refresh)
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(self.header)
+        view.set_content(self.toasts)
+        self.set_content(view)
+        self.refresh()
+        GLib.timeout_add_seconds(30, lambda: (self.refresh(quiet=True), True)[1])
+
+    # ---- what the agent says -----------------------------------------------------------------
+    def refresh(self, quiet=False):
+        worker.run(lambda: (core.read_status(), core.vpn_connections()), self.show)
+
+    def toast(self, words):
+        self.toasts.add_toast(Adw.Toast(title=words, timeout=6))
+
+    def show(self, got):
+        st, conns = got
+        self.header.kit_title.set_subtitle(st.get("name", "") if st else "")
+        self.toasts.set_child(self.joined(st, conns) if st else self.not_joined())
+
+    def not_joined(self):
+        page = Adw.StatusPage(icon_name="network-workgroup-symbolic", title="Not in a network yet",
+                              description="On your network's control page: Devices, Add a computer. It shows one "
+                                          "command; paste it here.")
+        b = Gtk.Button(label="Join a network…", halign=Gtk.Align.CENTER)
+        b.add_css_class("pill")
+        b.add_css_class("suggested-action")
+        b.connect("clicked", lambda *_a: self.join_dialog())
+        page.set_child(b)
+        return page
+
+    def row(self, group, title, subtitle, level=None, suffix=None):
+        r = Adw.ActionRow(title=title, subtitle=GLib.markup_escape_text(subtitle or ""))
+        if level:
+            r.add_prefix(dot(level))
+        if suffix:
+            r.add_suffix(suffix)
+        group.add(r)
+        return r
+
+    def button(self, label, callback, css=None):
+        b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+        if css:
+            b.add_css_class(css)
+        b.connect("clicked", lambda *_a: callback())
+        return b
+
+    def joined(self, st, conns):
+        page = Adw.PreferencesPage()
+        net = Adw.PreferencesGroup(title="The network")
+        level, words = core.reported(st)
+        self.row(net, st.get("name", "?"), st.get("control", ""))
+        self.row(net, "Last report", words, level)
+        page.add(net)
+
+        vpn = Adw.PreferencesGroup(title="VPN", description="Its connection comes from the network's profile")
+        if conns:
+            for name, up in sorted(conns.items()):
+                switch = Gtk.Switch(active=up, valign=Gtk.Align.CENTER)
+                switch.connect("notify::active", lambda s, _p, n=name: self.vpn(n, s.get_active()))
+                links = ", ".join(v["address"] for v in st.get("vpn", []) if v["link"] == name)
+                self.row(vpn, name, ("up: " + links) if up and links else ("up" if up else "down"), "ok" if up else "warn", switch)
+        else:
+            self.row(vpn, "No connection", "this computer has no place on the VPN, or its profile has not come yet")
+        page.add(vpn)
+
+        dsk = Adw.PreferencesGroup(title="Disk")
+        level, words = core.disk(st)
+        bind = self.button("Bind…", self.bind_dialog) if st.get("unlock") == "waits" else None
+        self.row(dsk, "Its disk", words, level, bind)
+        page.add(dsk)
+
+        sysg = Adw.PreferencesGroup(title="System")
+        self.row(sysg, st.get("os", "?"), "kernel %s" % st.get("kernel", "?"))
+        self.row(sysg, "Updates", core.updates(st), None, self.button("Update now", self.update))
+        page.add(sysg)
+
+        leave = Adw.PreferencesGroup()
+        self.row(leave, "Leave the network", "takes away its VPN connection, the network's CA, its disk's binding "
+                                             "and the agent", None, self.button("Leave…", self.leave_dialog, "destructive-action"))
+        page.add(leave)
+        return page
+
+    # ---- what it does ---------------------------------------------------------------------------
+    def root(self, argv, data=None, done=""):
+        def finish(got):
+            rc, said = got
+            self.toast(done if rc == 0 else ("not done: " + (said or "exit %d" % rc)))
+            self.refresh()
+        worker.run(lambda: core.as_root(argv, data), finish)
+
+    def vpn(self, name, up):
+        worker.run(lambda: Gio.Subprocess.new(["nmcli", "connection", "up" if up else "down", name],
+                                              Gio.SubprocessFlags.STDERR_SILENCE).wait(None),
+                   lambda _r: self.refresh())
+
+    def update(self):
+        self.toast("the update runs; it may take a while")
+        self.root([core.AGENT, "update"], done="updated: a new system image counts from the next start")
+
+    def dialog(self, title, body, action, callback, destructive=False):
+        d = Adw.AlertDialog(heading=title, body=body)
+        d.add_response("cancel", "Cancel")
+        d.add_response("go", action)
+        d.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE if destructive else Adw.ResponseAppearance.SUGGESTED)
+        d.connect("response", lambda _d, r: callback() if r == "go" else None)
+        return d
+
+    def leave_dialog(self):
+        self.dialog("Leave the network?", "Its VPN connection, the network's CA and its disk's binding to the network's "
+                                          "rings go; the disk opens by its passphrase, as before. The network's own list "
+                                          "keeps it until it is removed on the control page.",
+                    "Leave", lambda: self.root([core.AGENT, "leave"], done="this computer has left the network"),
+                    destructive=True).present(self)
+
+    def bind_dialog(self):
+        entry = Adw.PasswordEntryRow(title="The disk's passphrase")
+        box = Gtk.ListBox(css_classes=["boxed-list"])
+        box.append(entry)
+        d = self.dialog("Open the disk by the network's rings?", "Its passphrase is asked once, to add the rings "
+                        "beside it. It keeps working. clevis comes onto the system first; on Bluefin or Silverblue that "
+                        "counts from the next start, then bind once more.", "Bind",
+                        lambda: self.root([core.AGENT, "bind", "--stdin"], entry.get_text().encode(),
+                                          done="bound: from the next start the rings open the disk"))
+        d.set_extra_child(box)
+        d.present(self)
+
+    def join_dialog(self):
+        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.CHAR, monospace=True, top_margin=8, bottom_margin=8,
+                            left_margin=8, right_margin=8, height_request=120)
+        frame = Gtk.Frame(child=view)
+
+        def go():
+            buf = view.get_buffer()
+            got = core.parse_join(buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False))
+            if not got:
+                self.toast("that is not the command from the control page")
+                return
+            self.toast("fetching the agent from the network")
+            worker.run(lambda: core.fetch_join(*got),
+                       lambda script: self.root(["sh"], script, done="joined: the network hears from it within a minute"),
+                       lambda e: self.toast("not joined: %s" % e))
+        d = self.dialog("Join a network", "Paste the command from the control page (Devices, Add a computer). It "
+                        "works once.", "Join", go)
+        d.set_extra_child(frame)
+        d.present(self)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=INFO.app_id, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        (self.get_active_window() or Window(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

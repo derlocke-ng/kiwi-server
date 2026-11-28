@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kiwi Network
+Comment=This computer in its Kiwi network: its VPN, its disk, its updates
+Exec=kiwi-desktop
+Icon=network-workgroup
+Terminal=false
+Categories=System;Network;
+Keywords=kiwi;network;vpn;wireguard;disk;unlock;update;
+StartupNotify=true
+StartupWMClass=kiwi-desktop

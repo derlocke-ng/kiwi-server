@@ -779,6 +779,13 @@ def join_script(fleet, name, url, ca):
     return script.replace("key=$(cat)\n", "key='%s'\n" % secret, 1)
 
 
+def join_link(url, code, ca_pem):
+    """The short form for Kiwi Agent (and `kiwi-agent join`): the join address, and after `#ca=` the
+    SHA-256 of the network's CA. The app fetches the CA from the control page, checks it against that
+    sum, and fetches the agent with it."""
+    return "%s/api/client/join/%s#ca=%s" % (url, code, hashlib.sha256(ca_pem.encode() if isinstance(ca_pem, str) else ca_pem).hexdigest())
+
+
 def join_command(url, code, ca_b64):
     """The one command a person runs on the computer: the network's CA travels with it, so the
     download is checked against it; then the script, as root."""

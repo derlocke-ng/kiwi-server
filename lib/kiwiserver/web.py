@@ -996,9 +996,13 @@ href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this 
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
 <h2 id="add-computer">Add a computer</h2>
 {% if join %}<div class="card"><h2 style="margin-top:0">{{ joining }}: run this on it</h2>
-<p>In a terminal on the computer, at home or on the VPN. It asks for the computer's password (<code>sudo</code>),
-puts the network's agent on it, and from then on the computer shows below.</p>
+{% if join_link %}<p>In <strong>Kiwi Agent</strong> on the computer (<code>kiwi install kiwi-agent</code>), <em>Join a Network…</em>: this link.</p>
+<input readonly style="width:100%;font-family:monospace;font-size:.8rem" onclick="this.select()" value="{{ join_link }}">
+<p class="muted small">Or, without the app, this command in a terminal on the computer:</p>{% else %}
+<p>In a terminal on the computer, at home or on the VPN:</p>{% endif %}
 <textarea readonly rows="4" style="width:100%;font-family:monospace;font-size:.8rem" onclick="this.select()">{{ join }}</textarea>
+<p class="muted small">It asks for the computer's password (<code>sudo</code>), puts the network's agent on it, and from then on the
+computer shows below.</p>
 <p class="warn small">Works once, within a day. Whoever runs it makes their computer this one: do not send it around.</p></div>{% endif %}
 <form method="post" action="/devices/computer-add" class="card">{{ tok }}
 <p class="muted small">A desktop, a laptop, a system on a portable disk: the network sees it run, puts its CA and its VPN
@@ -3389,6 +3393,15 @@ def make_app(control: Control):
             return PlainTextResponse("".join(line + "\n" for line in control.client_answer(name, body)))
         return JSONResponse({"ok": True})
 
+    @app.get("/api/client/ca")
+    def client_ca():
+        """The network's CA certificate: public. A computer that joins by link checks it against the
+        sum in the link before it trusts anything from here."""
+        ca = control.client_ca()
+        if not ca:
+            return JSONResponse({"error": "no CA yet"}, status_code=404)
+        return PlainTextResponse(ca.decode(), headers={"Cache-Control": "no-store"})
+
     @app.get("/api/client/join/{code}")
     def client_join(code: str):
         """The agent for a computer that joins by its one-time command (no login: the code is the
@@ -3416,7 +3429,8 @@ def make_app(control: Control):
         except (TypeError, ValueError):
             hours = 0
         try:
-            return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api", hours=hours or None)}
+            command, link = control.client_invite(name, user=who if isinstance(who, str) else "api", hours=hours or None, both=True)
+            return {"command": command, "link": link}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -3694,10 +3708,11 @@ def make_app(control: Control):
         name = name.strip().lower()
         try:
             if what == "computer-add":          # a person's computer: the command that puts its agent on it
-                command = control.add_computer(name, vpn=vpn == "yes", group=group, full=split == "full", user=u)
-                return devices_page(request, join=command, joining=name)
+                command, link = control.add_computer(name, vpn=vpn == "yes", group=group, full=split == "full", user=u)
+                return devices_page(request, join=command, join_link=link, joining=name)
             if what == "computer-join":         # a new command for one that has not joined, or lost it
-                return devices_page(request, join=control.client_invite(name, u), joining=name)
+                command, link = control.client_invite(name, u, both=True)
+                return devices_page(request, join=command, join_link=link, joining=name)
             if what in ("computer-update", "computer-profile"):     # an order for a person's computer's agent
                 control.order(name, what.split("-", 1)[1], user=u)
                 return devices_page(request, ordered="%s's agent takes it with its next report, within a minute: %s." % (

@@ -16,6 +16,7 @@ from kiwiserver import clientagent, machineagent  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "a-client-key-of-the-test"
+CA_TEXT = "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"
 
 
 class FakeFleet:
@@ -594,6 +595,11 @@ class TestClientAgent(unittest.TestCase):
         spent = clientagent.join_command("https://control.papaya.home", "spent", "QUJD")
         r = subprocess.run(["bash", "-c", spent], env=env, capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout, r.stderr.strip()), (1, "", "kiwi-server: used up"))
+
+    def test_the_join_link_carries_the_cas_sum(self):
+        import hashlib
+        link = clientagent.join_link("https://control.papaya.home", "abcdefghijklmnop", CA_TEXT)
+        self.assertEqual(link, "https://control.papaya.home/api/client/join/abcdefghijklmnop#ca=" + hashlib.sha256(CA_TEXT.encode()).hexdigest())
 
     def test_the_fleet_names_its_clients(self):
         self.assertEqual(clientagent.names(FakeFleet({"pentest-1": None, "desk": {"group": "admins"}})),

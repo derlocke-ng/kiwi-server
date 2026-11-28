@@ -2461,12 +2461,12 @@ class Control:
             raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
                              or ["the computer was not added"])[-1][:300])
         self.audit(user, "added the computer %s%s" % (name, " with a place on the VPN" if vpn else ""))
-        return self.client_invite(name, user)
+        return self.client_invite(name, user, both=True)
 
     def _invites_path(self):
         return os.path.join(self.run, "client-invites.json")
 
-    def client_invite(self, name, user="admin", hours=None):
+    def client_invite(self, name, user="admin", hours=None, both=False):
         """The command a person runs on the computer, once, within a day (`hours`: up to two weeks,
         for install media that lies around a while): it fetches the agent with its key from this
         page, checked against the network's CA, which the command carries."""
@@ -2491,7 +2491,15 @@ class Control:
             held[hashlib.sha256(code.encode()).hexdigest()] = {"name": name, "until": now + hours * 3600}
             util.write_text(self._invites_path(), json.dumps(held) + "\n", 0o600)
         self.audit(user, "made the join command of the computer %s (one use, %d hours)" % (name, hours))
-        return clientagent.join_command(url, code, base64.b64encode(util.read_bytes(ca)).decode())
+        command = clientagent.join_command(url, code, base64.b64encode(util.read_bytes(ca)).decode())
+        # `both`: (the command, the short link for Kiwi Agent), for the same one-time code
+        return (command, clientagent.join_link(url, code, util.read_bytes(ca))) if both else command
+
+    def client_ca(self):
+        """The network's CA certificate (public): the start of a join by link, checked against its sum."""
+        from . import config
+        path = config.Fleet.load(self.fleet_path).resolve_path("secrets/ca/kiwiCA.pem")
+        return util.read_bytes(path) if os.path.isfile(path) else None
 
     def client_join(self, code):
         """The install script for the computer whose one-time code this is, with its key in it; the

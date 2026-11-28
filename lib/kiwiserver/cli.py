@@ -4973,7 +4973,7 @@ def cmd_client(args):
         if not controlsync.remote_of(fleet.dir):
             raise KiwiError("the command comes from the control node: join it first (kiwi-server control join %s LINK)"
                             % typed_path(args.fleet))
-        print(controlsync.client_invite_api(fleet.dir, name))
+        print(controlsync.client_invite_api(fleet.dir, name, link=args.link))
         # not on stdout: that is the command alone, as `$(kiwi-server client invite …)` takes it
         print(":: run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name,
               file=sys.stderr)
@@ -7426,6 +7426,7 @@ def build_parser():
     s.add_argument("--keymap", help="iso: the keyboard at the install and at the disk's prompt (us)")
     s.add_argument("--timezone", help="iso: the computer's time zone (UTC)")
     s.add_argument("--passphrase-file", metavar="FILE", help="iso: the disk's passphrase on the stick, for test machines only")
+    s.add_argument("--link", action="store_true", help="invite: the short link for Kiwi Agent, not the shell command")
     s.add_argument("--admin-key", metavar="FILE", help="iso: an SSH public key: a local admin `kiwi` who logs in by it only "
                                                        "(the IT department's way in), and sshd on")
     s.add_argument("--ssh", metavar="USER@ADDR", help="install, remove: on another computer, over SSH")

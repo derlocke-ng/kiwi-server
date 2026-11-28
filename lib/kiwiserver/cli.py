@@ -4928,7 +4928,9 @@ def cmd_client(args):
             raise KiwiError("the command comes from the control node: join it first (kiwi-server control join %s LINK)"
                             % typed_path(args.fleet))
         print(controlsync.client_invite_api(fleet.dir, name))
-        util.say("run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name)
+        # not on stdout: that is the command alone, as `$(kiwi-server client invite …)` takes it
+        print(":: run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name,
+              file=sys.stderr)
         return
     if args.action == "install":
         if bool(args.here) == bool(args.ssh):

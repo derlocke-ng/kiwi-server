@@ -92,6 +92,7 @@ desktop-manager plans of April:
 Built so far that it stands on: the servers' agent (signed reports to the control node), the
 access manager's groups, the desktop unlock drills (Debian GNOME and Silverblue VMs), the
 control node's API. Not built: the agent on a desktop, its orders, the Devices page for clients.
+The design with its build order: [docs/design/clients.md](../docs/design/clients.md).
 
 ## The order (first version)
 

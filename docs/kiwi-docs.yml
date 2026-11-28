@@ -30,6 +30,7 @@ pages:
   - design/local-first.md: "Design: local first"
   - design/ai.md: "Design: a local AI"
   - design/recovery.md: "Design: autonomy and recovery"
+  - design/clients.md: "Design: people's computers as clients"
   - design/onion.md: "Design: hidden services"
   - design/starter.md: "Design: the starter image"
   - design/standby.md: "Design: a standby master"

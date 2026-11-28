@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: control
   title: Control page
-  version: 1.2.1
+  version: 1.2.2
   description: "The control node (design/control-plane.md in kiwi-server): kiwi-server with web pages at control.<hostname>, for the mesh only. It keeps the fleet file and the secrets as the encrypted store, which its password opens into RAM; then it looks at every machine by itself, sends the role to RAM masters, and applies from a phone."
   category: system
   node_types: [node]
@@ -68,7 +68,9 @@ nginx:
     # stack's network, which the rule above does not know (its agent got 403).
     - path: "= /api/report"
       proxy: true
-      config: "allow all;"
+      # (a report is bigger than nginx's 16k: each one went through a file on the disk, with a
+      # warning in the log, three a minute)
+      config: "allow all; client_body_buffer_size 256k;"
   servers:
     # the status page: how the network is, for everyone on it, without a login. Whatever is asked
     # for at this name, the control part is asked for /status and nothing else. It is no admin

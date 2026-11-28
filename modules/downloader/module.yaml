@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: downloader
   title: Downloads
-  version: 1.1.1
+  version: 1.1.2
   description: "Transmission and JDownloader inside the VPN client's network namespace — no tunnel, no traffic — with their web UIs behind the reverse proxy"
   category: storage
   node_types: [node]
@@ -24,6 +24,10 @@ firewall:
 
 templates:
   compose: docker-compose.yml.j2
+  transmission_init: transmission-init.sh.j2
+
+outputs:
+  transmission_init: { path: "kiwi/transmission/10-kiwi.sh", mode: 0755 }
 
 storage:
   bind_mounts:

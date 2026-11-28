@@ -201,6 +201,10 @@ document it and are not tried.
   (Minecraft: refresh the server list, then join). The machine's page and
   `kiwi-server status` say "asleep", not "down". A server you stop by hand stays
   stopped. Leave `sleep` out for its first start, while a game downloads.
+  The log on the machine says who woke it (`journalctl -u kn-games-sleep`): an
+  address, or "outside the home, through the master". Any packet for its port
+  wakes a server, so a public one on a well-known port (Minecraft's 25565) is
+  woken by the Internet's scanners again and again and hardly sleeps.
 - **The people who play start and stop them** at the game page, without being
   admins: [control.md](control.md#the-game-page).
 

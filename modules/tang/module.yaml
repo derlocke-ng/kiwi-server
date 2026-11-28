@@ -3,7 +3,7 @@ schema_version: "1.0"
 module:
   name: tang
   title: Unlock ring (Tang)
-  version: 1.0.1
+  version: 1.0.2
   description: "Tang servers, which let the fleet's encrypted machines unlock at boot without anyone typing a key. A ring is one server with its own keys; the host's unlock: block says which rings may open its disk."
   category: security
   node_types: [node, master]

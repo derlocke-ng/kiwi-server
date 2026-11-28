@@ -42,10 +42,11 @@ services:
 {% if vpn_provider == 'custom' and 'HEALTH_RESTART_VPN' not in extra_env %}
       # one fixed server (a node's is its master): a tunnel set up anew reaches the same server
       # with the same keys, so nothing is gained, and everything that uses the tunnel is cut each
-      # time. gluetun's own check asks names on the Internet through the tunnel: while the
-      # master's way out was away, every node set its tunnel up anew every six seconds (27 Nov
-      # 2026: 76 times in eleven minutes), and a few times every morning when that way out
-      # reconnects. The tunnel now stays as it is
+      # time. gluetun's own check asks names on the Internet through the tunnel, and a failed one
+      # set the tunnel up anew every six seconds. When the provider renumbered a home's line (27
+      # Nov 2026, 03:01) six machines did that 76 times each: the line was back at 03:09, the mesh
+      # only at 03:14. The same when only the master's way out is away and the mesh itself is
+      # fine. The tunnel now stays as it is; WireGuard finds its way again by itself
       - HEALTH_RESTART_VPN=off
 {% endif %}
 {% for k, v in extra_env.items() %}

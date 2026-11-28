@@ -377,6 +377,7 @@ class Renderer:
         self.reads = {}             # name -> what its render read of the other machines' parts
         self._records = []
         self._names = {}        # every name a host's sites answer for, its public ones too: {hostname: [name]}
+        self.skipped = {}       # the machines the name scan could not read: {name: why} (refuse_names_left_out)
         self._node_lan = []
         self._needs_ca = False
         self._master_ip = ""
@@ -579,6 +580,7 @@ class Renderer:
             except KiwiError as e:
                 if not re.search(r"vpn-client\.wireguard_config: file not found", str(e)):   # not enrolled yet: no mesh name yet
                     util.warn("dns records: skipping %s: %s" % (h.name, e))
+                    self.skipped[h.name] = str(e)
         # a node open to the internet: the master hands its public names and ports on. They are
         # not in the records above: on the VPN and at home too they lead to the master's public
         # address, as for everyone
@@ -1965,6 +1967,30 @@ def _inputs_now(fleet, roles, r):
     pre = {h.name: {p: json.dumps(v, sort_keys=True, default=_plain) for p, v in reachmod.part_data(h, "*").items()}
            for h in clean.hosts.values()}
     return shared, pre
+
+
+def refuse_names_left_out(fleet, r, hosts):
+    """A machine the name scan cannot read is left out of every other machine's names. One that was
+    applied runs, with names: an apply of the others now would take its sites off the network. Until
+    2.325.0 that went on with a warning only: a setting saved by a newer release, and `apply --changed`
+    of an older one would have applied the name servers without that machine (found 28 Nov 2026)."""
+    r.scan()
+    st = fleet_state(fleet)
+    ran = set(st.get("applied") or {}) | set(st.get("rendered") or {})
+    applying = {h.name for h in hosts}
+    gone = {n: e for n, e in r.skipped.items() if n in ran and n not in applying}
+    if not gone:
+        return
+    many = len(gone) > 1
+    why = "; ".join("%s: %s" % (n, e.splitlines()[0][:200]) for n, e in sorted(gone.items()))
+    newer = any(k in e for e in gone.values() for k in NOT_KNOWN_HERE)
+    cure = ("This is kiwi-server %s, and what it does not know usually comes from a newer release that saved this fleet: "
+            "update kiwi-server on this computer (kiwi update kiwi-server) and apply again" % VERSION if newer
+            else "Correct %s first" % ("them" if many else "it"))
+    raise KiwiError("the settings of %s cannot be read here (%s). %s, and an apply now would leave %s names out of the other "
+                    "machines: %s sites would be gone from the network. Nothing was applied. %s"
+                    % (", ".join(sorted(gone)), why, "They run" if many else "It runs", "their" if many else "its",
+                       "their" if many else "its", cure))
 
 
 def changed_since_apply(fleet, roles, r, skip=()):
@@ -3628,6 +3654,7 @@ def cmd_apply(args):
         raise KiwiError("--ssh goes with exactly one host")
     check(fleet, roles, ms, hosts)
     r = Renderer(fleet, roles, out_dir_for(args, fleet), make_tc(args), ms, media_dir_for(args, fleet))
+    refuse_names_left_out(fleet, r, hosts)
     failed = []
     update = getattr(args, "update", False)
     r.updating = bool(update)       # (the control node updating its own machine takes the newest control image)

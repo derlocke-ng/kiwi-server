@@ -247,6 +247,13 @@ answering. Without this an nginx that refuses its config does not start again, a
 of the machine is gone until the next good apply. The accounts (Kanidm) are asked the same
 way.
 
+**A machine whose settings cannot be read stops every apply** once it has been applied. Every
+machine's role carries the names of the others (the name servers, the master), and a machine
+whose settings this kiwi-server cannot read would be left out of them: its sites would be gone
+from the network. Most often its settings come from a newer kiwi-server (on another computer,
+or on the control node); the message then says to update kiwi-server here. A machine that was
+never applied has no names yet and does not stop the others.
+
 **A failed role says so**: `/var/lib/kiwi-server/role.failed` names the step
 and the command, and `kiwi-server status` shows it. The marker that means
 "applied" is only written once every container of the stack runs.

@@ -302,9 +302,9 @@ def placed(host, since, run=None):
     model that does not fit beside what ai.card_free_mb leaves goes to the processor without an
     error (28 Nov 2026, lemonaide beside Studio)."""
     from . import remote
-    try:
+    try:                # only a remark: whatever keeps it from the log (no login there), nothing is said
         out = (run or remote.run)(remote.reach(host, None), PLACED % max(int(since), 1)).decode(errors="replace")
-    except (KiwiError, OSError):
+    except (KiwiError, OSError, AttributeError, KeyError, TypeError):
         return None
     m = re.search(r"offloaded (\d+)/(\d+) layers", out)
     return (int(m.group(1)), int(m.group(2))) if m else None

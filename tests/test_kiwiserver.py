@@ -16178,10 +16178,70 @@ class TestFirstRunPage(StoreBase):
         util.write_text(os.path.join(self.c.reports_dir, machine + ".txt"), "now=1\nbox=0123456789abcdef\nos=uCore\n", 0o600)
         got = json.loads(self.ask("/api/clients", cookie=cookie)[1])["clients"]
         self.assertEqual(got[0]["box_of"], machine)
+        # its answer: which profile is its own, then its orders, signed with its key
+        ca = fleet.resolve_path("secrets/ca/kiwiCA.pem")
+        os.makedirs(os.path.dirname(ca), exist_ok=True)
+        util.write_text(ca, "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n", 0o644)
+        when = int(time.time())
+        req = urllib.request.Request(self.url + "/api/client/report", data=body, method="POST", headers={
+            "X-Kiwi-Client": "pentest-1", "X-Kiwi-Time": str(when), "X-Kiwi-Orders": "1", "Content-Type": "text/plain",
+            "X-Kiwi-Sign": clientagent.signature(key, "pentest-1", when, body)})
+        self.c._reported_at.clear()
+        with urllib.request.urlopen(req) as r:
+            said = r.read().decode()
+        want = said.splitlines()[0].split()[1]
+        req = urllib.request.Request(self.url + "/api/client/profile", headers={
+            "X-Kiwi-Client": "pentest-1", "X-Kiwi-Time": str(when), "X-Kiwi-Sign": clientagent.request_signature(key, "pentest-1", when)})
+        with urllib.request.urlopen(req) as r:
+            prof, sig = r.read(), r.headers.get("X-Kiwi-Sign")
+        self.assertEqual(hashlib.sha256(prof).hexdigest(), want)
+        self.assertEqual(sig, clientagent.profile_signature(key, "pentest-1", prof))
+        self.assertIn(b"\nca ", prof)
+        req = urllib.request.Request(self.url + "/api/client/profile", headers={
+            "X-Kiwi-Client": "pentest-1", "X-Kiwi-Time": str(when), "X-Kiwi-Sign": clientagent.request_signature("other", "pentest-1", when)})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        e.exception.close()
+        self.assertEqual(e.exception.code, 403)
+        o = self.c.order("pentest-1", "update", user="admin")
+        self.assertTrue(o.get("client"))
+        with self.assertRaisesRegex(KiwiError, "takes update, profile"):
+            self.c.order("pentest-1", "restart", "kn-vault")
+        lines = self.c.client_answer("pentest-1", b"facts\n")
+        self.assertEqual(lines[1], "order %s update - %d %s" % (o["id"], o["at"], clientagent.order_signature(
+            key, "pentest-1", o["id"], "update", "-", o["at"])))
+        self.c.client_answer("pentest-1", ("kiwi-done %s 0 started\n" % o["id"]).encode())
+        self.assertEqual(self.c.orders("pentest-1")[-1]["state"], "ok")
         page = self.ask("/devices", cookie=cookie)[1]                        # and on the Devices page
         self.assertIn("Computers that report", page)
         self.assertIn("Kali GNU/Linux Rolling", page)
         self.assertIn("%s&#39;s hardware" % machine, page)
+        self.assertNotIn("Update now", page)                                 # an agent of 2.329.0 takes no orders
+        clientagent.keep(self.c.reports_dir, "pentest-1", body + b"agent 2\nprofile 0123456789ab\n")
+        page = self.ask("/devices", cookie=cookie)[1]
+        self.assertIn("Update now", page)
+        self.assertIn("profile 0123456", page)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+        status, page, _ = self.ask("/devices/computer-update", {"csrf": csrf, "name": "pentest-1"}, cookie=cookie)
+        self.assertIn("the system&#39;s update starts", page)
+        self.assertEqual(self.c.orders("pentest-1")[-1]["what"], "update")
+        # a computer without kiwi-server joins by a one-time command: the CA travels with it, the key
+        # comes once, through the pipe into sudo sh
+        self.enterContext(mock.patch.object(agentmod, "url", lambda fleet, ms: "https://control.test.home"))
+        command = self.c.client_invite("pentest-1")
+        self.assertIn("base64 -d", command)
+        self.assertIn("| sudo sh", command)
+        url = re.search(r"(https://\S+/api/client/join/[A-Za-z0-9_-]+)", command).group(1)
+        code = url.rsplit("/", 1)[1]
+        self.assertNotIn(key, command)
+        status, script, _ = self.ask("/api/client/join/" + code)
+        self.assertEqual(status, 200)
+        self.assertIn("key='%s'\n" % key, script)
+        self.assertIn("NAME=pentest-1\n", script)
+        self.assertEqual(self.ask("/api/client/join/" + code)[0], 410)               # once
+        self.assertEqual(self.ask("/api/client/join/" + "x" * 32)[0], 410)
+        status, page, _ = self.ask("/devices/computer-join", {"csrf": csrf, "name": "pentest-1"}, cookie=cookie)
+        self.assertIn("pentest-1: run this on it", page)
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

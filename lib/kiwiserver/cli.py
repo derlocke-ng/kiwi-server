@@ -4903,12 +4903,25 @@ def cmd_client(args):
         if text is None:
             raise KiwiError("the fleet file could not be changed in place: add `clients: {%s: {}}` at its top level" % name)
         util.write_text(path, text, 0o600)
-        util.say("%s is a client of %s. Next: put its agent on it, there with kiwi-server client install %s %s --here, "
-                 "or over SSH with --ssh USER@ADDRESS; kiwi-server control push %s brings it to the control node"
-                 % (name, shown_path(fleet.path), typed_path(args.fleet), name, typed_path(args.fleet)))
+        util.say("%s is a client of %s" % (name, shown_path(fleet.path)))
+        if args.vpn:        # its place on the VPN, as a device's: its profile carries it to the computer
+            rc = main(["enroll", args.fleet, name] + ([] if args.full else ["--split"])
+                      + (["--group", args.group] if args.group else []))
+            if rc:
+                raise SystemExit(rc)
+        util.say("Next: kiwi-server control push %s brings it to the control node; then its agent on it, there with "
+                 "kiwi-server client install %s %s --here, or over SSH with --ssh USER@ADDRESS"
+                 % (typed_path(args.fleet), typed_path(args.fleet), name))
         return
     if name not in have:
         raise KiwiError("no client called %s (kiwi-server client list %s)" % (name, typed_path(args.fleet)))
+    if args.action == "invite":         # the one-time command for a computer without kiwi-server, from the control node
+        if not controlsync.remote_of(fleet.dir):
+            raise KiwiError("the command comes from the control node: join it first (kiwi-server control join %s LINK)"
+                            % typed_path(args.fleet))
+        print(controlsync.client_invite_api(fleet.dir, name))
+        util.say("run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name)
+        return
     if args.action == "install":
         if bool(args.here) == bool(args.ssh):
             raise KiwiError("where? --here for this computer, or --ssh USER@ADDRESS for another")
@@ -4935,6 +4948,10 @@ def cmd_client(args):
         if text is None:
             raise KiwiError("the fleet file could not be changed in place: take %s out of clients: by hand" % name)
         util.write_text(path, text, 0o600)
+        if os.path.isfile(fleet.resolve_path("secrets/devices/%s.conf" % name)):   # its place on the VPN goes too
+            rc = main(["enroll", args.fleet, name, "--remove"])
+            if rc:
+                util.warn("%s's place on the VPN is still there: kiwi-server enroll %s %s --remove" % (name, typed_path(args.fleet), name))
         util.say("%s is no client any more: its reports are refused from now on%s" % (
             name, "" if args.ssh else "; its agent stays on the computer until kiwi-server client remove %s %s --ssh … "
                                       "takes it away (or remove /etc/kiwi-client there)" % (typed_path(args.fleet), name)))
@@ -7143,7 +7160,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
-  kiwi-server client add|install|list|remove <fleet> [name] [--here|--ssh U@A]
+  kiwi-server client add|invite|install|list|remove <fleet> [name] [--vpn] [--here|--ssh U@A]
                                                 a person's computer as a client: its agent reports to the control node
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
   kiwi-server ssh-config <fleet> [--write]      ssh's own configuration for the machines: `ssh papaya` with the fleet's key
@@ -7336,10 +7353,13 @@ def build_parser():
                    help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("client", cmd_client)
-    s.add_argument("action", choices=["add", "install", "list", "remove"])
+    s.add_argument("action", choices=["add", "invite", "install", "list", "remove"])
     s.add_argument("fleet")
     s.add_argument("name", nargs="?", help="the client: a person's computer (lowercase letters, digits, dashes)")
     s.add_argument("--here", action="store_true", help="install: on this computer (sudo asks for its password)")
+    s.add_argument("--vpn", action="store_true", help="add: a place on the VPN too; its profile sets the connection up")
+    s.add_argument("--full", action="store_true", help="add --vpn: everything through the VPN, not only the network")
+    s.add_argument("--group", help="add --vpn: the VPN group, which decides what it may reach (a pentest system: one of its own)")
     s.add_argument("--ssh", metavar="USER@ADDR", help="install, remove: on another computer, over SSH")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")

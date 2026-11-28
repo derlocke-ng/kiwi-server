@@ -102,6 +102,12 @@ def network_names(renderer):
     return sorted({n for _ip, n in renderer.dns_records() if n.count(".") >= 2})
 
 
+def silent(host, tgt, every, run=remote.run):
+    """The network's sites that do not answer through a master now, asked once: before its apply,
+    so that a machine that is off (lemonaide, 28 Nov 2026) does not stop the apply after it."""
+    return [b.rsplit(":", 1)[0] for b in answers(host, tgt, every, run=run, wait=0, script=MESH_SCRIPT)]
+
+
 def answers(host, tgt, names, run=remote.run, wait=WAIT, sleep=time.sleep, clock=time.monotonic, script=None):
     """What is not well on the machine after its apply: its sites that do not answer ("name:502")
     and its services that report unhealthy ("kn-vault:unhealthy"); [] when nothing. Asked on the

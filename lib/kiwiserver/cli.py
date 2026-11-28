@@ -3912,14 +3912,23 @@ def cmd_apply(args):
                 raise KiwiError("%s failed: stopped here. Not touched: %s" % (h.name, left))
             names = carefulmod.names_of(r, h)
             bad = carefulmod.answers(h, remote.reach(h), names)
+            through = ""
+            if not bad and h.role in roles and roles[h.role].node_type == "master":
+                # its VPN server may have restarted: the network's sites answer through it again first
+                every = carefulmod.network_names(r)
+                gone = carefulmod.answers(h, remote.reach(h), every, script=carefulmod.MESH_SCRIPT)
+                if gone:
+                    raise KiwiError("%s is applied, and from it these sites of the network do not answer: %s. Stopped "
+                                    "here. Not touched: %s" % (h.name, ", ".join(gone), left))
+                through = "; the network's %d sites answer through it" % len(every)
             if bad:
                 sick = [b.rsplit(":", 1)[0] for b in bad if b.endswith(":unhealthy")]
                 sites = [b for b in bad if not b.endswith(":unhealthy")]
                 what = ([("of its sites these do not answer: %s" % ", ".join(sites))] if sites else []) \
                     + ([("%s unhealthy" % util.count(len(sick), "service reports", "services report") + ": " + ", ".join(sick))] if sick else [])
                 raise KiwiError("%s is applied, and %s. Stopped here. Not touched: %s" % (h.name, "; ".join(what), left))
-            util.say("%s: %s, no service reports unhealthy" % (h.name, "its %s" % util.count(len(names), "site answers", "sites answer")
-                                                          if names else "it has no site to ask"))
+            util.say("%s: %s, no service reports unhealthy%s" % (h.name, "its %s" % util.count(len(names), "site answers", "sites answer")
+                                                            if names else "it has no site to ask", through))
         hosts_waves = []
     else:
         hosts_waves = apply_waves(fleet, roles, [h for h in hosts if h.name in scripts])

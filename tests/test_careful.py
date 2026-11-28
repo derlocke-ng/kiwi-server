@@ -71,6 +71,19 @@ class TestCareful(unittest.TestCase):
         self.assertEqual(sick, ["kn-vault:unhealthy"])
         self.assertEqual(careful.answers(h, "core@medlar", [], run=lambda t, s: b"bad\n", wait=0), [])
 
+    def test_after_a_master_the_networks_sites_are_asked_through_its_pihole(self):
+        r = types.SimpleNamespace(dns_records=lambda: [("10.9.0.11", "lime.home"), ("10.9.0.11", "pihole.lime.home"),
+                                                       ("10.9.0.12", "vault.quince.home"), ("10.9.0.12", "vault.quince.home")])
+        self.assertEqual(careful.network_names(r), ["pihole.lime.home", "vault.quince.home"])
+        outs = iter([b"bad vault.quince.home:000\n", b"bad\n"])
+        sent, now = [], [0.0]
+        bad = careful.answers(host("sorbet", role="master"), "core@sorbet", careful.network_names(r),
+                              run=lambda t, s: sent.append(s) or next(outs), script=careful.MESH_SCRIPT,
+                              sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0])
+        self.assertEqual(bad, [])                                           # the tunnel came back on the second look
+        self.assertIn('podman exec "$p" curl', sent[0])
+        self.assertIn("NAMES='pihole.lime.home vault.quince.home'", sent[0])
+
     def test_only_the_machines_own_names_under_the_fleets_domain_are_asked(self):
         r = types.SimpleNamespace(scan=lambda: None, aliases={"cloud.home"},
                                   _names={"medlar.home": ["medlar.home", "git.medlar.home", "*.medlar.home", "paste.dlhost.eu",

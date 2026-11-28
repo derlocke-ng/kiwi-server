@@ -10,7 +10,10 @@ that is not: a new release, a setting nobody tried yet.
   this last. Of two machines that share a moving address, the one that waits goes before the one
   that holds it, so the address has a machine with its services up at every moment.
 - After each machine its own sites are asked, from the machine itself, until they answer or two
-  minutes have passed; and its services with a health check, until none reports unhealthy.
+  minutes have passed; and its services with a health check, until none reports unhealthy. After a
+  master also every site of the network, from its Pi-hole as `check` asks them: its VPN server
+  restarted, and the tunnels take a moment to come back (28 Nov 2026: the check after an apply
+  found nine sites gone for that moment).
 - The first machine that fails, whose sites do not answer or that has an unhealthy service stops the
   apply: the machines after it are not touched, and it says which.
 - A machine that does not answer at all is left out and said at the end: nothing was changed there.
@@ -34,6 +37,19 @@ for n in $NAMES; do
 done
 # and its services that have a health check: one that says it is not well (one still starting is not)
 for c in $(podman ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null); do bad="$bad $c:unhealthy"; done
+echo "bad$bad"
+'''
+
+# stdin: nothing. NAMES: every site of the network. Asked on a master through its Pi-hole, which
+# sits in the VPN server's network (the master's own system is not on the mesh): as `check` does
+MESH_SCRIPT = r'''
+p=$(podman ps --format '{{.Names}}' | grep -E '^k[mn]-pihole$' | head -1)
+[ -n "$p" ] || { echo "bad"; exit 0; }
+bad=
+for n in $NAMES; do
+    code=$(podman exec "$p" curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://$n/" 2>/dev/null)
+    case ${code:-000} in 2??|3??|4??) ;; *) bad="$bad $n:${code:-000}" ;; esac
+done
 echo "bad$bad"
 '''
 
@@ -81,12 +97,17 @@ def order(fleet, roles, hosts, renderer, holds=holds, me=None):
     return sorted(leaves, key=lambda h: h.name) + core + standbys + masters + mine
 
 
-def answers(host, tgt, names, run=remote.run, wait=WAIT, sleep=time.sleep, clock=time.monotonic):
+def network_names(renderer):
+    """Every site of the network under its own domain, as the DNS machines know them."""
+    return sorted({n for _ip, n in renderer.dns_records() if n.count(".") >= 2})
+
+
+def answers(host, tgt, names, run=remote.run, wait=WAIT, sleep=time.sleep, clock=time.monotonic, script=None):
     """What is not well on the machine after its apply: its sites that do not answer ("name:502")
     and its services that report unhealthy ("kn-vault:unhealthy"); [] when nothing. Asked on the
     machine every few seconds until all is well or `wait` seconds have passed (a container that
     restarted takes a moment)."""
-    script = "NAMES=%s\n%s" % (shlex.quote(" ".join(names)), VERIFY_SCRIPT)
+    script = "NAMES=%s\n%s" % (shlex.quote(" ".join(names)), script or VERIFY_SCRIPT)
     end, bad = clock() + wait, []
     while True:
         try:

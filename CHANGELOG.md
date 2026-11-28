@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.327.1 — a careful apply waits for the network after a master
+
+- **`apply --careful`**: after a master it also asks every site of the network, from the
+  master's Pi-hole as `kiwi-server check` does, until all answer (two minutes at most). Its VPN
+  server may have restarted, and the nodes' tunnels take a moment to come back: on 28 Nov the
+  check right after a rollout found nine sites gone for that moment. The master's line says
+  "the network's N sites answer through it"; when they do not, the apply stops there and names
+  them.
+
 ## 2.327.0 — the moving address stays when both gateways see the same fault
 
 - **The moving address (vip)** no longer disappears when both machines of a pair fail the same

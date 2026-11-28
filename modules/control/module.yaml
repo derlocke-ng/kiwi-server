@@ -71,9 +71,13 @@ nginx:
       # (a report is bigger than nginx's 16k: each one went through a file on the disk, with a
       # warning in the log, three a minute)
       config: "allow all; client_body_buffer_size 256k;"
-    # a person's computer says how it is (kiwi-server's clientagent.py), signed with its own key: from
-    # any VPN group it is in, also one without the admin pages (a pentest system)
+    # a person's computer (kiwi-server's clientagent.py): its reports, its profile, its one-time join,
+    # each signed with its key or holding a one-time code. From any VPN group it is in, also one
+    # without the admin pages (a pentest system), and from home before it has a place on the VPN
     - path: "= /api/client-report"
+      proxy: true
+      config: "allow all;"
+    - path: "^~ /api/client/"
       proxy: true
       config: "allow all;"
   servers:

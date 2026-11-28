@@ -49,6 +49,17 @@ def main():
     for d, text in madeup.devices():
         with open(os.path.join(case.f.dir, "secrets", "devices", d + ".conf"), "w") as fh:
             fh.write(text)
+    # three people's computers that report: one runs on a machine's hardware, one is away
+    from kiwiserver import clientagent, config, fleettext, util
+    machine = sorted(config.Fleet.load(case.c.fleet_path).hosts)[-1]     # a machine of the page's own fleet
+    block, said, box = madeup.clients(machine)
+    path = os.path.realpath(case.c.fleet_path)
+    util.write_text(path, fleettext.put(util.read_text(path), ["clients"], block), 0o600)
+    for n, text in said.items():
+        clientagent.keep(case.c.reports_dir, n, text.encode())
+    away = os.path.join(case.c.reports_dir, "clients", "laptop.txt")
+    os.utime(away, (time.time() - 3 * 86400,) * 2)
+    util.write_text(os.path.join(case.c.reports_dir, machine + ".txt"), "now=1\nbox=%s\n" % box, 0o600)
     print("http://127.0.0.1:%d   password: %s   (Ctrl+C ends it)" % (port, case.PW), flush=True)
     try:
         while True:

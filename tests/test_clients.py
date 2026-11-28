@@ -22,7 +22,151 @@ class FakeFleet:
         self.hosts = {h: object() for h in hosts}
 
     def derive_secret(self, *parts, length=32):
-        return ("|".join(parts) + "x" * length)[:length]
+        return ("".join(parts).replace("-", "") + "x" * length)[:length]
+
+
+class TestClientProfileAndOrders(unittest.TestCase):
+    """The agent takes its profile (the CA into the system's trust, the VPN as a NetworkManager
+    connection) and its orders, all signed with its key, and refuses what is not."""
+
+    def setUp(self):
+        import base64
+        self.t = tempfile.mkdtemp()
+        for d in ("agent", "bin", "run", "state", "anchors"):
+            os.makedirs(os.path.join(self.t, d))
+
+        def w(p, text, mode=0o644):
+            with open(os.path.join(self.t, p), "w") as f:
+                f.write(text)
+            os.chmod(os.path.join(self.t, p), mode)
+        self.w = w
+        w("agent/conf", "URL=https://control.test\nNAME=desk\n")
+        w("agent/key", KEY, 0o600)
+        w("agent/salt", "s\n")
+        w("agent/ca.pem", "")
+        w("agent/facts.sh", "echo os Test\n")
+        self.conf = "[Interface]\nPrivateKey = x\nAddress = 10.9.0.40/32\n[Peer]\nPublicKey = y\nAllowedIPs = 10.9.0.0/16\nEndpoint = vpn.test:51820\n"
+        self.ca = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----"
+        self.profile = ("profile 1\nnetwork home\nconnection kiwi-home\nca %s\nvpn %s\nvpn_mode split\nsearch ~home\n"
+                        % (base64.b64encode(self.ca.encode()).decode(), base64.b64encode(self.conf.encode()).decode())).encode()
+        w("profile", self.profile.decode())
+        w("profile.sign", clientagent.profile_signature(KEY, "desk", self.profile))
+        stubs = {
+            # curl: the profile (GET .../profile, its signature in the headers) or the answer to a report
+            "curl": 'o=; h=; b=; u=; while [ $# -gt 0 ]; do case $1 in -o) o=$2; shift ;; -D) h=$2; shift ;; --data-binary) b=${2#@}; shift ;;'
+                    ' https://*) u=$1 ;; esac; shift; done\n'
+                    'case $u in */api/client/profile) cp %(t)s/profile "$o"; printf "HTTP/2 200\\r\\nX-Kiwi-Sign: %%s\\r\\n" "$(cat %(t)s/profile.sign)" > "$h"; printf 200 ;;\n'
+                    '  *) n=$(ls %(t)s/run | grep -c sent); cp "$b" %(t)s/run/sent.$n; cp %(t)s/answer "$o" 2>/dev/null || : > "$o"; printf 200 ;; esac\n',
+            "nmcli": 'echo "nmcli $*" >> %(t)s/nm\ncase "$*" in "-t -f NAME connection show") cat %(t)s/conns 2>/dev/null ;;'
+                     ' "connection import type wireguard file "*) cp "${@: -1}" %(t)s/imported; echo kiwi-home >> %(t)s/conns ;; esac\n',
+            "update-ca-trust": 'echo updated >> %(t)s/trust\n',
+            "systemd-run": 'echo "systemd-run $*" >> %(t)s/said\n',
+            "rpm-ostree": 'exit 0\n',
+            "logger": 'shift 2; echo "$*" >> %(t)s/logged\n',
+            "flock": 'exit 0\n',
+        }
+        for name, body in stubs.items():
+            w("bin/" + name, "#!/bin/bash\n" + body % {"t": self.t}, 0o755)
+        self.script = ((clientagent.SCRIPT % {"dir": self.t + "/agent"})
+                       .replace("/var/lib/kiwi-client", self.t + "/state")
+                       .replace("/etc/pki/ca-trust/source/anchors", self.t + "/anchors")
+                       .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
+
+    def answer(self, *lines):
+        self.w("answer", "".join(line + "\n" for line in lines))
+
+    def run_agent(self):
+        path = os.path.join(self.t, "bin", "kiwi-client-agent")
+        with open(path, "w") as f:
+            f.write(self.script)
+        os.chmod(path, 0o755)
+        r = subprocess.run([path], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"]),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def read(self, p):
+        try:
+            with open(os.path.join(self.t, p)) as f:
+                return f.read()
+        except FileNotFoundError:
+            return ""
+
+    def test_a_new_profile_is_applied_once(self):
+        import hashlib
+        self.answer("profile " + hashlib.sha256(self.profile).hexdigest())
+        self.run_agent()
+        self.assertEqual(self.read("anchors/kiwi-home.pem").strip(), self.ca)        # the CA, trusted by the system
+        self.assertIn("updated", self.read("trust"))
+        self.assertEqual(self.read("imported"), self.conf)                           # the VPN, imported as kiwi-home
+        nm = self.read("nm")
+        self.assertIn("connection modify kiwi-home ipv4.never-default yes ipv4.dns-search ~home", nm)
+        self.assertIn("connection up kiwi-home", nm)
+        self.assertFalse([f for f in os.listdir(os.path.join(self.t, "run")) if f.startswith("kiwi-client.")])  # the config left no copy
+        self.assertIn("its profile is applied", self.read("logged"))
+        # the same profile again: nothing is done anew
+        os.remove(os.path.join(self.t, "nm"))
+        os.remove(os.path.join(self.t, "trust"))
+        self.run_agent()
+        self.assertEqual((self.read("nm"), self.read("trust")), ("", ""))
+
+    def test_a_profile_not_signed_by_the_control_node_is_left(self):
+        import hashlib
+        self.w("profile.sign", clientagent.profile_signature("another key", "desk", self.profile))
+        self.answer("profile " + hashlib.sha256(self.profile).hexdigest())
+        self.run_agent()
+        self.assertEqual((self.read("anchors/kiwi-home.pem"), self.read("nm")), ("", ""))
+        self.assertIn("not signed by the control node", self.read("logged"))
+
+    def test_orders_update_and_profile_and_nothing_else(self):
+        at = int(time.time())
+
+        def order(oid, what, key=KEY, when=at):
+            return "order %s %s - %d %s" % (oid, what, when, clientagent.order_signature(key, "desk", oid, what, "-", when))
+        self.answer(order("a1", "update"), order("a2", "reboot"), order("a3", "update", key="other"),
+                    order("a4", "update", when=at - 3600))
+        self.run_agent()
+        said = self.read("said")
+        self.assertIn("--unit=kiwi-order-a1 rpm-ostree upgrade", said)
+        self.assertEqual(said.count("systemd-run"), 1)                                # a2, a3, a4: not run
+        told = self.read("run/sent.1")                                                # the report after, at once
+        self.assertIn("kiwi-done a1 0 started", told)
+        self.assertIn("kiwi-done a2 2 not an order this agent takes: reboot", told)
+        self.assertIn("kiwi-done a4 2 too old", told)
+        self.assertNotIn("a3", told)
+        self.assertIn("order a3 is not signed by the control node", self.read("logged"))
+        self.run_agent()                                                              # an order runs once
+        self.assertEqual(self.read("said").count("systemd-run"), 1)
+
+    def test_a_machines_order_signature_is_no_clients(self):
+        at = int(time.time())
+        self.assertNotEqual(machineagent.order_signature(KEY, "desk", "a", "update", "-", at),
+                            clientagent.order_signature(KEY, "desk", "a", "update", "-", at))
+
+    def test_the_profile_says_split_or_full_from_the_config(self):
+        import base64
+        tmp = tempfile.mkdtemp()
+
+        class F(FakeFleet):
+            defaults = {"domain": "home"}
+
+            def resolve_path(self, rel):
+                return os.path.join(tmp, rel)
+        f = F({"desk": {}})
+        os.makedirs(os.path.join(tmp, "secrets", "ca"))
+        os.makedirs(os.path.join(tmp, "secrets", "devices"))
+        with open(os.path.join(tmp, "secrets", "ca", "kiwiCA.pem"), "w") as fh:
+            fh.write(self.ca)
+        body = clientagent.profile(f, "desk").decode()
+        self.assertIn("connection kiwi-home\n", body)
+        self.assertNotIn("vpn ", body)                                                # no place on the VPN: the CA only
+        with open(os.path.join(tmp, "secrets", "devices", "desk.conf"), "w") as fh:
+            fh.write(self.conf)
+        body = clientagent.profile(f, "desk", linked=["kiwi"]).decode()
+        self.assertIn("vpn_mode split\nsearch ~home,~kiwi\n", body)
+        self.assertEqual(base64.b64decode(body.split("\nvpn ")[1].split("\n")[0]).decode(), self.conf)
+        with open(os.path.join(tmp, "secrets", "devices", "desk.conf"), "w") as fh:
+            fh.write(self.conf.replace("10.9.0.0/16", "0.0.0.0/0, ::/0"))
+        self.assertIn("vpn_mode full", clientagent.profile(f, "desk").decode())
 
 
 class TestClientAgent(unittest.TestCase):
@@ -110,6 +254,16 @@ class TestClientAgent(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
         with self.assertRaisesRegex(KiwiError, "no control node"):
             clientagent.install_script(f, "pentest-1", None, "ca")
+
+    def test_the_join_script_carries_the_key_and_the_command_the_ca(self):
+        f = FakeFleet({"kali": {}})
+        s = clientagent.join_script(f, "kali", "https://control.papaya.home", "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----")
+        self.assertIn("key='%s'\n" % clientagent.key(f, "kali"), s)
+        self.assertNotIn("key=$(cat)", s)
+        self.assertEqual(subprocess.run(["bash", "-n"], input=s, text=True, capture_output=True).returncode, 0)
+        c = clientagent.join_command("https://control.papaya.home", "abc_DEF-123", "QUJD")
+        self.assertEqual(c, 'c=$(mktemp) && echo QUJD | base64 -d > "$c" && curl -fsS --cacert "$c" '
+                            'https://control.papaya.home/api/client/join/abc_DEF-123 | sudo sh; rm -f "$c"')
 
     def test_the_fleet_names_its_clients(self):
         self.assertEqual(clientagent.names(FakeFleet({"pentest-1": None, "desk": {"group": "admins"}})),

@@ -28,6 +28,12 @@ if [ -f /var/lib/kiwi-server/role.failed ]; then
     kv role_failed "$(head -n 3 /var/lib/kiwi-server/role.failed | tr '\n' ' ' | cut -c1-300)"
 fi
 (. /etc/os-release 2>/dev/null; kv os "${PRETTY_NAME:-}")
+# the box, summed as the network's clients sum theirs (docs/design/clients.md): a person's system
+# booted on this hardware (a pentest SSD) is shown on it. Only with the agent's salt: x86 boards
+uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr -d ' \n' | grep -viE '^[0-]*$|^[f-]*$')
+if [ -r /etc/kiwi-server/agent/salt ] && [ -n "$uuid" ]; then
+    kv box "$(printf '%s\n%s' "$(cat /etc/kiwi-server/agent/salt)" "$uuid" | sha256sum | cut -c1-16)"
+fi
 kv kernel "$(uname -r)"
 kv uptime "$(cut -d. -f1 /proc/uptime)"
 kv load "$(cut -d' ' -f1-3 /proc/loadavg)"
@@ -323,6 +329,7 @@ def parse(data, local_now=None):
         "applied": raw.get("applied", ""),
         "role_failed": raw.get("role_failed", ""),
         "os": raw.get("os", ""),
+        "box": raw.get("box", ""),
         "kernel": raw.get("kernel", ""),
         "uptime": _int(raw.get("uptime")),
         "load": [float(x) for x in load] if len(load) == 3 else [],

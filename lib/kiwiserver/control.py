@@ -2350,11 +2350,144 @@ class Control:
         clientagent.keep(self.reports_dir, name, body)
         return None
 
+    def _client_profile(self, name):
+        """(the client's profile, its sha256), kept while the fleet's files stay."""
+        from . import clientagent, config, federation as fedmod
+
+        def make():
+            fleet = config.Fleet.load(self.fleet_path)
+            domain = str(fleet.defaults.get("domain") or "home")
+            linked = [fedmod.seen(x)[1] for x in fedmod.partners(fleet.dir).values() if fedmod.seen(x)[1] and fedmod.seen(x)[1] != domain]
+            body = clientagent.profile(fleet, name, linked)
+            return {"body": body.decode(), "sum": hashlib.sha256(body).hexdigest()}
+        got = self._read_once("client-profile:" + name, make)
+        return got["body"].encode(), got["sum"]
+
+    def client_profile(self, name, when, sign):
+        """(profile, its signature) for a client that asks with its own key; else (None, why not)."""
+        from . import clientagent
+        if self.locked():
+            return None, "the control node is locked"
+        key = self._client_keys().get(name) if clientagent.NAME.match(name or "") else None
+        if not key:
+            return None, "no such client"
+        why = clientagent.check_request(key, name, when, sign, now=self.clock())
+        if why:
+            return None, why
+        body, _sum = self._client_profile(name)
+        return body, clientagent.profile_signature(key, name, body)
+
+    def client_answer(self, name, body):
+        """What a client's agent is told after its report was taken: which profile is its own, and
+        the lines of its orders."""
+        try:
+            lines = ["profile %s" % self._client_profile(name)[1]]
+        except (KiwiError, OSError, ValueError) as e:
+            util.warn("control: the profile of %s: %s" % (name, e))
+            lines = []
+        try:
+            return lines + self._orders_out(name, body, client=True)
+        except (KiwiError, OSError, ValueError) as e:
+            util.warn("control: the orders for %s: %s" % (name, e))
+            return lines
+
+    # ---- a person's computer joins by a one-time command (docs/design/clients.md) -------------
+    INVITE_HOURS = 24
+
+    def add_computer(self, name, vpn=False, group="", full=False, user="admin"):
+        """A person's computer as a client (`kiwi-server client add`), with a place on the VPN when
+        asked, and the command that puts its agent on it. Returns that command."""
+        if self.locked():
+            raise KiwiError("the fleet is locked: log in")
+        if not HOST.match(name or ""):
+            raise KiwiError("a name for the computer: lowercase letters, digits and dashes, like annas-laptop")
+        argv = list(self.kiwi) + ["client", "add", self.fleet_path, name] + (["--vpn"] if vpn else []) + \
+            (["--group", group] if vpn and group else []) + (["--full"] if vpn and full else [])
+        with self.lock:
+            r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.fleet_dir)
+            if not self._pushed():
+                self.save_fleet()
+        if r.returncode != 0:
+            raise KiwiError(((r.stderr or r.stdout).strip().replace("error: ", "").splitlines()
+                             or ["the computer was not added"])[-1][:300])
+        self.audit(user, "added the computer %s%s" % (name, " with a place on the VPN" if vpn else ""))
+        return self.client_invite(name, user)
+
+    def _invites_path(self):
+        return os.path.join(self.run, "client-invites.json")
+
+    def client_invite(self, name, user="admin"):
+        """The command a person runs on the computer, once, within a day: it fetches the agent with
+        its key from this page, checked against the network's CA, which the command carries."""
+        import base64
+        from . import clientagent, config, machineagent
+        if name not in self._client_keys():
+            raise KiwiError("no computer called %s" % name)
+        fleet = config.Fleet.load(self.fleet_path)
+        url = machineagent.url(fleet, self._modules())
+        ca = fleet.resolve_path("secrets/ca/kiwiCA.pem")
+        if not url or not os.path.isfile(ca):
+            raise KiwiError("the network has no control page address or no CA yet")
+        code = pysecrets.token_urlsafe(24)
+        with self._orders_lock:
+            try:
+                held = json.loads(util.read_text(self._invites_path()))
+            except (OSError, ValueError):
+                held = {}
+            now = int(self.clock())
+            held = {k: v for k, v in held.items() if v.get("until", 0) > now and v.get("name") != name}
+            held[hashlib.sha256(code.encode()).hexdigest()] = {"name": name, "until": now + self.INVITE_HOURS * 3600}
+            util.write_text(self._invites_path(), json.dumps(held) + "\n", 0o600)
+        self.audit(user, "made the join command of the computer %s (one use, %d hours)" % (name, self.INVITE_HOURS))
+        return clientagent.join_command(url, code, base64.b64encode(util.read_bytes(ca)).decode())
+
+    def client_join(self, code):
+        """The install script for the computer whose one-time code this is, with its key in it; the
+        code is spent. None when it is unknown, spent or too old."""
+        from . import clientagent, config, machineagent
+        if self.locked() or not code:
+            return None
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        with self._orders_lock:
+            try:
+                held = json.loads(util.read_text(self._invites_path()))
+            except (OSError, ValueError):
+                return None
+            got = held.pop(digest, None)
+            util.write_text(self._invites_path(), json.dumps(held) + "\n", 0o600)
+        if not got or got.get("until", 0) < self.clock():
+            return None
+        name = got["name"]
+        fleet = config.Fleet.load(self.fleet_path)
+        if name not in clientagent.names(fleet):
+            return None
+        self.audit("control", "the computer %s fetched its agent" % name)
+        return clientagent.join_script(fleet, name, machineagent.url(fleet, self._modules()),
+                                       util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem")))
+
+    def _modules(self):
+        from . import modules as modmod
+        return modmod.discover()
+
     def clients(self):
         """The fleet's clients with their last report, and the machine whose box each one runs on."""
         from . import clientagent, config
         fleet = config.Fleet.load(self.fleet_path)
-        return clientagent.rows(self.reports_dir, clientagent.names(fleet), now=self.clock())
+        return clientagent.rows(self.reports_dir, clientagent.names(fleet), boxes=self._boxes(fleet), now=self.clock())
+
+    def _boxes(self, fleet):
+        """{the sum of a box: the machine of the fleet that runs on it}, from each machine's last report,
+        however old: a pentest SSD booted on the workstation is on lemonaide's box while lemonaide is off."""
+        out = {}
+        for name in fleet.hosts:
+            try:
+                text = util.read_text(os.path.join(self.reports_dir, name + ".txt"))
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.startswith("box="):
+                    out[line[4:].strip()] = name
+        return out
 
     # ---- orders for the machines' agents (docs/design/scale.md, "Takes orders") ----------------
     # A person asks (POST /api/orders); the machine's agent gets the order with the answer to its
@@ -2377,21 +2510,25 @@ class Control:
     def order(self, host, what, target="", user="control"):
         """An order for a machine's agent: restart, start or stop one of its services, or update.
         Returns the order. Its agent takes it within a minute; one not taken in ORDER_AGE is gone."""
-        from . import machineagent as agent
+        from . import clientagent, machineagent as agent
         if self.locked():
             raise KiwiError("the control node is locked")
-        if not HOST.match(host or "") or host not in self._agent_keys():
+        client = bool(HOST.match(host or "")) and host not in self._agent_keys() and host in self._client_keys()
+        if not client and (not HOST.match(host or "") or host not in self._agent_keys()):
             raise KiwiError("no such machine: %s" % host)
-        if what not in agent.ORDERS:
-            raise KiwiError("an agent takes %s, not %r" % (", ".join(agent.ORDERS), what))
-        target = "-" if what == "update" else str(target or "")
-        if what != "update" and not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$", target):
+        kinds = clientagent.ORDERS if client else agent.ORDERS
+        if what not in kinds:
+            raise KiwiError("%s takes %s, not %r" % ("a computer's agent" if client else "an agent", ", ".join(kinds), what))
+        target = "-" if client or what == "update" else str(target or "")
+        if target != "-" and not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$", target):
             raise KiwiError("which service? (a container of the machine, like kn-vault)")
         o = {"id": "%x-%s" % (int(self.clock()), pysecrets.token_hex(4)), "host": host, "what": what, "target": target,
              "at": int(self.clock()), "by": str(user)[:64], "state": "waiting"}
+        if client:
+            o["client"] = True
         with self._orders_lock:
             self._keep_orders(self._orders() + [o])
-        self.audit(user, "asked %s's agent to %s%s" % (host, what, "" if what == "update" else " " + target), host=host)
+        self.audit(user, "asked %s's agent to %s%s" % (host, what, "" if target == "-" else " " + target), host=host)
         return o
 
     def orders(self, host=None):
@@ -2418,17 +2555,18 @@ class Control:
             util.warn("control: the orders for %s: %s" % (name, e))
             return []
 
-    def _orders_out(self, name, body):
-        """For a machine whose report was just taken: what came of its orders (the report's
-        kiwi-done lines) is kept, and the lines of what waits for it are returned, signed."""
-        from . import machineagent as agent
+    def _orders_out(self, name, body, client=False):
+        """For a machine (or a person's computer) whose report was just taken: what came of its
+        orders (the report's kiwi-done lines) is kept, and the lines of what waits for it are
+        returned, signed."""
+        from . import clientagent, machineagent as agent
         done = {oid: (rc, said) for oid, rc, said in agent.done_lines(body)}
         now = int(self.clock())
         lines, told = [], []
         with self._orders_lock:
             orders = self._orders()
             for o in orders:
-                if o.get("host") != name:
+                if o.get("host") != name or bool(o.get("client")) != client:
                     continue
                 if o["id"] in done and o.get("state") in ("waiting", "sent"):
                     rc, said = done[o["id"]]
@@ -2448,14 +2586,15 @@ class Control:
                 self._keep_orders(orders)
         for o in told:
             self.audit("control", "%s's agent: %s%s %s%s" % (
-                name, o["what"], "" if o["what"] == "update" else " " + o["target"],
+                name, o["what"], "" if o["target"] == "-" else " " + o["target"],
                 {"ok": "done", "failed": "failed", "gone": "not taken"}[o["state"]], (": " + o["said"]) if o.get("said") else ""),
                 host=name)
         if not lines:
             return []
-        key = self._agent_keys().get(name)
+        key = (self._client_keys() if client else self._agent_keys()).get(name)
+        sign = clientagent.order_signature if client else agent.order_signature
         return ["order %s %s %s %s %s" % (o["id"], o["what"], o["target"], o["at"],
-                                          agent.order_signature(key, name, o["id"], o["what"], o["target"], o["at"]))
+                                          sign(key, name, o["id"], o["what"], o["target"], o["at"]))
                 for o in lines]
 
     def report(self, name, when, boot, sign, body):

@@ -75,3 +75,30 @@ def put(text, path, value):
         return out if yaml.safe_load(out) == want else None
     except yaml.YAMLError:
         return None
+
+
+def drop(text, path):
+    """`text` without the key at `path` and its lines, or None when this cannot be done in the text
+    (the last client gone: no `clients: {}` left behind)."""
+    try:
+        want = copy.deepcopy(yaml.safe_load(text))
+        d = want
+        for k in path[:-1]:
+            d = d[k]
+        if not isinstance(d, dict) or path[-1] not in d:
+            return None
+        del d[path[-1]]
+    except (yaml.YAMLError, KeyError, TypeError):
+        return None
+    lines = text.split("\n")
+    at = _block(lines, list(path))
+    if not at:
+        return None
+    start, end, indent = at
+    while end < len(lines) and lines[end].startswith(" " * indent + "- "):
+        end += 1
+    out = "\n".join(lines[:start] + lines[end:])
+    try:
+        return out if yaml.safe_load(out) == want else None
+    except yaml.YAMLError:
+        return None

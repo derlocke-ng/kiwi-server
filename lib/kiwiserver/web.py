@@ -994,6 +994,45 @@ href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this 
 <button name="name" value="{{ d.name }}" formaction="/devices/remove" onclick="return confirm('Take '+this.value+' off the VPN? Its connection stops working at once.')">Remove</button></td></tr>
 {% endfor %}</tbody></table></div>{% endfor %}</form>{% endif %}{% endif %}
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
+<h2 id="add-computer">Add a computer</h2>
+{% if join %}<div class="card"><h2 style="margin-top:0">{{ joining }}: run this on it</h2>
+<p>In a terminal on the computer, at home or on the VPN. It asks for the computer's password (<code>sudo</code>),
+puts the network's agent on it, and from then on the computer shows below.</p>
+<textarea readonly rows="4" style="width:100%;font-family:monospace;font-size:.8rem" onclick="this.select()">{{ join }}</textarea>
+<p class="warn small">Works once, within a day. Whoever runs it makes their computer this one: do not send it around.</p></div>{% endif %}
+<form method="post" action="/devices/computer-add" class="card">{{ tok }}
+<p class="muted small">A desktop, a laptop, a system on a portable disk: the network sees it run, puts its CA and its VPN
+on it, and updates it when you ask.</p>
+<label for="cn">Name</label><input id="cn" name="name" placeholder="annas-laptop" pattern="[a-z0-9][a-z0-9-]*" required>
+<label class="check"><input type="checkbox" name="vpn" value="yes" checked><span>A place on the VPN
+<span class="muted small">(its connection is set up on it, and kept)</span></span></label>
+{% if groups %}<label for="cg">Who is it for?</label><select id="cg" name="group">
+{% for g in groups %}<option value="{{ g }}" {% if g == default_group %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
+<p class="muted small">A pentest system: a group of its own, out to the Internet and nothing at home.</p>{% endif %}
+<label class="check"><input type="checkbox" name="split" value="full"><span>Everything through the VPN
+<span class="muted small">(without it, only the network goes through it and its Internet stays as it is)</span></span></label>
+<div class="actions"><button class="primary">Add it</button></div></form>
+{% if clients %}<h2 id="computers">Computers that report</h2>
+<p class="muted small">People's computers with the network's agent on them: it tells this page every minute how the
+computer is. A computer is its installed system: a system on a portable disk shows the machine it runs on now.</p>
+{% if ordered %}<p class="banner ok">{{ ordered }}</p>{% endif %}
+<div class="scroll"><table class="tbl"><thead><tr><th>Computer</th><th>Now</th><th>Runs on</th><th>System</th><th>VPN</th><th>Disk</th><th>Updates</th><th></th></tr></thead><tbody>
+{% for c in clients %}{% set f = c.facts %}<tr><td><b>{{ c.name }}</b>{% if f.hostname and f.hostname != c.name %}<br><span class="sm">{{ f.hostname }}</span>{% endif %}</td>
+<td><span class="badge {{ 'ok' if c.state == 'on' else '' }}" {% if c.seen %}title="Last report {{ age(now - c.seen) }} ago"{% endif %}>{{
+{"on": "on", "away": "away", "never": "not yet"}[c.state] }}</span></td>
+<td>{{ (c.box_of ~ "'s hardware") if c.box_of else ("its own box" if f.box else "-") }}</td>
+<td>{{ f.os or "-" }}{% if f.profile %}<br><span class="sm" title="The profile it applied: the network's CA, its VPN">profile {{ f.profile[:7] }}</span>{% endif %}</td>
+<td>{% if f.vpn %}{{ f.vpn | map(attribute="link") | join(", ") }}{% else %}<span class="muted">none</span>{% endif %}</td>
+<td>{% if f.crypt %}encrypted{% if f.clevis %}, opens by rings{% endif %}{% elif f.crypt == 0 %}<span class="badge bad">not encrypted</span>{% else %}-{% endif %}</td>
+{% set u = f.updates %}<td>{{ "-" if not u else "one waits for a restart" if u == "staged" else "none waiting" if u in ("none-staged", "0") else u ~ " waiting" }}</td>
+<td class="acts">{% if (f.agent or "0") | int >= 2 %}<form class="inline" method="post" action="/devices/computer-update">{{ tok }}
+<input type="hidden" name="name" value="{{ c.name }}"><button title="Its system's update, now: rpm-ostree or apt. A new system image counts from its next start">Update now</button></form>
+<form class="inline" method="post" action="/devices/computer-profile">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
+<button title="The network's CA and its VPN connection, set up again as the network says">Apply its profile</button></form>{% endif %}
+{% if c.state == "never" %}<form class="inline" method="post" action="/devices/computer-join">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
+<button title="It has not reported yet: a new one-time command that puts the agent on it">Join command</button></form>{% endif %}</td></tr>
+{% endfor %}</tbody></table></div>
+<p class="muted small">A computer joins with <code>kiwi-server client add</code> and <code>client install</code> (docs: Machines, "People's computers").</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach
 your network, even with the WireGuard app still on it.</p></details>
 {% endblock %}""",
@@ -3325,10 +3364,12 @@ def make_app(control: Control):
             return PlainTextResponse("".join(line + "\n" for line in control.answer(h.get("x-kiwi-host") or "", body)))
         return JSONResponse({"ok": True})
 
-    @app.post("/api/client-report")
+    @app.post("/api/client/report")
+    @app.post("/api/client-report")         # (2.329.0's name)
     async def client_report(request: Request):
         """A person's computer says how it is (clientagent.py). No login: signed with the client's
-        own key, which only the seed gives."""
+        own key, which only the seed gives. With X-Kiwi-Orders: which profile is its own, and its
+        orders, one line each."""
         from . import clientagent
         try:
             size = int(request.headers.get("content-length") or 0)
@@ -3338,10 +3379,51 @@ def make_app(control: Control):
             return JSONResponse({"error": "too big"}, status_code=413)
         body = await request.body()
         h = request.headers
-        why = control.client_report(h.get("x-kiwi-client") or "", h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "", body)
+        name = h.get("x-kiwi-client") or ""
+        why = control.client_report(name, h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "", body)
         if why:
             return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
+        if h.get("x-kiwi-orders") == "1":
+            return PlainTextResponse("".join(line + "\n" for line in control.client_answer(name, body)))
         return JSONResponse({"ok": True})
+
+    @app.get("/api/client/join/{code}")
+    def client_join(code: str):
+        """The agent for a computer that joins by its one-time command (no login: the code is the
+        permission, once, for a day). The script carries the computer's key: it goes straight into
+        `sudo sh` on that computer."""
+        script = control.client_join(code[:64]) if re.fullmatch(r"[A-Za-z0-9_-]{16,64}", code or "") else None
+        if script is None:
+            return PlainTextResponse("echo 'kiwi-server: this join command is used up, too old or unknown: make a new one "
+                                     "on the control page (Devices, Add a computer)' >&2; exit 1\n", status_code=410)
+        return PlainTextResponse(script, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/client/invite")
+    async def client_invite_api(request: Request):
+        """A computer's one-time join command, for a person who is logged in (or a key of the network)."""
+        who = user(request) or bearer(request)
+        if not who:
+            return JSONResponse({"error": "log in"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        name = str((body or {}).get("name") or "") if isinstance(body, dict) else ""
+        try:
+            return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api")}
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/client/profile")
+    def client_profile(request: Request):
+        """A person's computer's profile (the network's CA, its VPN), signed with its own key: asked
+        for with that key, no login."""
+        h = request.headers
+        name = h.get("x-kiwi-client") or ""
+        body, sig = control.client_profile(name, h.get("x-kiwi-time") or "", h.get("x-kiwi-sign") or "")
+        if body is None:
+            return JSONResponse({"error": sig}, status_code=503 if "locked" in sig else 403)
+        return PlainTextResponse(body.decode(), headers={"X-Kiwi-Sign": sig, "Cache-Control": "no-store"})
 
     @app.get("/api/clients")
     def api_clients(request: Request):
@@ -3426,8 +3508,13 @@ def make_app(control: Control):
     def devices_page(request, **kw):
         info = control.fleet_info() or {}
         q = request.query_params.get("q") or "" if request.method == "GET" else ""
+        try:
+            clients = control.clients()
+        except (KiwiError, OSError, ValueError):
+            clients = []
         return page("devices.html", request, "/devices", devices=control.devices(), t=machtable.device_table(control.device_rows(), q),
-                    groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), **kw)
+                    groups=sorted(info.get("groups") or {}), default_group=info.get("default_group"), clients=clients,
+                    now=time.time(), **kw)
 
     @app.get("/devices")
     def devices(request: Request):
@@ -3581,12 +3668,21 @@ def make_app(control: Control):
 
     @app.post("/devices/{what}")
     def devices_do(request: Request, what: str, name: str = Form(""), group: str = Form(""), csrf: str = Form(""),
-                   split: str = Form("")):
+                   split: str = Form(""), vpn: str = Form("")):
         u = posted(request, csrf)
         if not u:
             return login_page()
         name = name.strip().lower()
         try:
+            if what == "computer-add":          # a person's computer: the command that puts its agent on it
+                command = control.add_computer(name, vpn=vpn == "yes", group=group, full=split == "full", user=u)
+                return devices_page(request, join=command, joining=name)
+            if what == "computer-join":         # a new command for one that has not joined, or lost it
+                return devices_page(request, join=control.client_invite(name, u), joining=name)
+            if what in ("computer-update", "computer-profile"):     # an order for a person's computer's agent
+                control.order(name, what.split("-", 1)[1], user=u)
+                return devices_page(request, ordered="%s's agent takes it with its next report, within a minute: %s." % (
+                    name, "the system's update starts" if what.endswith("update") else "its profile is applied again"))
             if what == "remove":
                 control.remove_device(name, u)
                 return devices_page(request, removed=name)

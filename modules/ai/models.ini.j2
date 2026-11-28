@@ -19,9 +19,18 @@ log-verbosity = 4
 ; a model named here and already downloaded is listed once
 dedup-cache-models = true
 {% for m in models %}
+{# llama.cpp lists a model under its quant as the end of the file's name, upper case
+   (UD-Q4_K_S as Q4_K_S, q4_k_m as Q4_K_M): the fleet's own name stays an alias of it #}
+{% set tag = m.split(':')[-1] if ':' in m else '' %}
+{% set end = tag.replace('.', '-').split('-')[-1] %}
+{% set listed = m[:m|length - tag|length] ~ ((end or tag)|upper) %}
 
 [{{ m }}]
 hf-repo = {{ m }}
+{% if listed != m %}
+; llama.cpp lists it as {{ listed }}; asked for by this name too
+alias = {{ m }}
+{% endif %}
 {% if loop.first %}
 load-on-startup = true
 {% endif %}

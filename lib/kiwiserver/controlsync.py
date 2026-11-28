@@ -622,6 +622,26 @@ def watch_api(fleet_dir, key=None):
     return api.events()
 
 
+def order_api(fleet_dir, host, what, target="", key=None):
+    """An order for a machine's agent, through the control node (machineagent.py): the order."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("POST", "/api/orders", {"host": host, "what": what, "target": target})
+    if status == 404:
+        raise KiwiError("the control node is too old to give orders: update it (kiwi-server apply <fleet> <its machine> --update)")
+    if status != 200 or not isinstance(out, dict):
+        raise KiwiError("the control node refused: %s" % ((out or {}).get("error") if isinstance(out, dict) else status))
+    return out
+
+
+def orders_api(fleet_dir, host=None, key=None):
+    """The orders of the last hours, of one machine when `host` is given."""
+    api, _key = api_for(fleet_dir, key)
+    status, out = api.call("GET", "/api/orders" + ("?host=" + host if host else ""))
+    if status != 200 or not isinstance(out, dict):
+        raise KiwiError("the control node did not say (%s)" % status)
+    return out.get("orders") or []
+
+
 def activity_api(fleet_dir, key=None):
     """The control node's Activity: {jobs, entries}."""
     api, _key = api_for(fleet_dir, key)

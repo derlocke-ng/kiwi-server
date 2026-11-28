@@ -243,6 +243,7 @@ class Control:
         self._book = threading.Lock()         # for _retrying
         self._boots = {}                      # machine -> the boot its last report came from
         self._reported_at = {}                # machine -> when its last report was taken
+        self._orders_lock = threading.Lock()  # orders.json
         self._coming = set()                  # machines a look after their report is under way for
         self._reads = {}                      # what a `--porcelain` read worked out, until the fleet changes (_read_once)
         self._gen = 0                         # counted up with every job that ends: nothing kept outlives one
@@ -2316,6 +2317,108 @@ class Control:
             fleet = config.Fleet.load(self.fleet_path)
             return {h.name: agent.key(fleet, h) for h in fleet.hosts.values()}
         return self._read_once("agent-keys", read)
+
+    # ---- orders for the machines' agents (docs/design/scale.md, "Takes orders") ----------------
+    # A person asks (POST /api/orders); the machine's agent gets the order with the answer to its
+    # next report, signed with its own key, runs it, and says what came of it in the report after.
+    @property
+    def orders_path(self):
+        return os.path.join(self.run, "orders.json")
+
+    def _orders(self):
+        try:
+            got = json.loads(util.read_text(self.orders_path))
+            return got if isinstance(got, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def _keep_orders(self, orders):
+        os.makedirs(self.run, mode=0o700, exist_ok=True)
+        util.write_text(self.orders_path, json.dumps(orders[-500:], indent=1) + "\n", 0o600)
+
+    def order(self, host, what, target="", user="control"):
+        """An order for a machine's agent: restart, start or stop one of its services, or update.
+        Returns the order. Its agent takes it within a minute; one not taken in ORDER_AGE is gone."""
+        from . import machineagent as agent
+        if self.locked():
+            raise KiwiError("the control node is locked")
+        if not HOST.match(host or "") or host not in self._agent_keys():
+            raise KiwiError("no such machine: %s" % host)
+        if what not in agent.ORDERS:
+            raise KiwiError("an agent takes %s, not %r" % (", ".join(agent.ORDERS), what))
+        target = "-" if what == "update" else str(target or "")
+        if what != "update" and not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$", target):
+            raise KiwiError("which service? (a container of the machine, like kn-vault)")
+        o = {"id": "%x-%s" % (int(self.clock()), pysecrets.token_hex(4)), "host": host, "what": what, "target": target,
+             "at": int(self.clock()), "by": str(user)[:64], "state": "waiting"}
+        with self._orders_lock:
+            self._keep_orders(self._orders() + [o])
+        self.audit(user, "asked %s's agent to %s%s" % (host, what, "" if what == "update" else " " + target), host=host)
+        return o
+
+    def orders(self, host=None):
+        """The orders of the last hours, newest last; of one machine when `host` is given. One that
+        waits longer than an agent takes it counts as gone (an agent too old for orders never asks)."""
+        from . import machineagent as agent
+        now, out = int(self.clock()), []
+        for o in self._orders():
+            if host is not None and o.get("host") != host:
+                continue
+            if o.get("state") in ("waiting", "sent") and now - int(o.get("at") or 0) > agent.ORDER_AGE:
+                o = dict(o, state="gone", said="its agent did not take it within %d minutes" % (agent.ORDER_AGE // 60))
+            out.append(o)
+        return out
+
+    def answer(self, name, body):
+        """What a machine's agent is told after its report was taken (report() gave None): the
+        lines of its orders. Nothing for a last report: the machine goes down."""
+        if body.startswith(b"kiwi-last "):
+            return []
+        try:
+            return self._orders_out(name, body)
+        except (KiwiError, OSError, ValueError) as e:       # the report stays taken; the orders wait
+            util.warn("control: the orders for %s: %s" % (name, e))
+            return []
+
+    def _orders_out(self, name, body):
+        """For a machine whose report was just taken: what came of its orders (the report's
+        kiwi-done lines) is kept, and the lines of what waits for it are returned, signed."""
+        from . import machineagent as agent
+        done = {oid: (rc, said) for oid, rc, said in agent.done_lines(body)}
+        now = int(self.clock())
+        lines, told = [], []
+        with self._orders_lock:
+            orders = self._orders()
+            for o in orders:
+                if o.get("host") != name:
+                    continue
+                if o["id"] in done and o.get("state") in ("waiting", "sent"):
+                    rc, said = done[o["id"]]
+                    o.update(state="ok" if rc == 0 else "failed", rc=rc, said=said, done=now)
+                    told.append(o)
+                elif o.get("state") in ("waiting", "sent") and now - o["at"] > agent.ORDER_AGE:
+                    o.update(state="gone", said="its agent did not take it within %d minutes" % (agent.ORDER_AGE // 60))
+                    told.append(o)
+                elif o.get("state") == "waiting":
+                    o["state"] = "sent"
+                    lines.append(o)
+                elif o.get("state") == "sent" and now - o.get("sent", now) > 120:
+                    lines.append(o)         # its answer got lost: sent again (the agent runs an id once)
+                if o in lines:
+                    o["sent"] = now
+            if lines or told:
+                self._keep_orders(orders)
+        for o in told:
+            self.audit("control", "%s's agent: %s%s %s%s" % (
+                name, o["what"], "" if o["what"] == "update" else " " + o["target"],
+                {"ok": "done", "failed": "failed", "gone": "not taken"}[o["state"]], (": " + o["said"]) if o.get("said") else ""),
+                host=name)
+        if not lines:
+            return []
+        key = self._agent_keys().get(name)
+        return ["order %s %s %s %s %s" % (o["id"], o["what"], o["target"], o["at"],
+                                          agent.order_signature(key, name, o["id"], o["what"], o["target"], o["at"]))
+                for o in lines]
 
     def report(self, name, when, boot, sign, body):
         """A machine's agent says how the machine is. None when taken; else why not (the page

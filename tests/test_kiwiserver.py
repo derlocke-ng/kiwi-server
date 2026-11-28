@@ -16007,6 +16007,65 @@ class TestFirstRunPage(StoreBase):
         with self.assertRaisesRegex(KiwiError, "which part"):
             self.c.argv("switch", [a, b], module=part)
 
+    def test_an_order_reaches_a_machines_agent_with_its_reports_answer(self):
+        """Orders (docs/design/scale.md): a person asks, the machine's agent gets the order, signed
+        with its own key, in the answer to its next report, and says what came of it in the one
+        after. Sent again when that answer got lost; gone when nobody took it in time."""
+        from kiwiserver import machineagent as agentmod
+        self.made()
+        name = sorted(self.data()["hosts"])[0]
+        fleet = config.Fleet.load(self.c.fleet_path)
+        key = agentmod.key(fleet, fleet.hosts[name])
+        now = [1_800_000_000]
+        self.c.clock = lambda: now[0]
+        with self.assertRaisesRegex(KiwiError, "takes restart, start, stop, update"):
+            self.c.order(name, "rm", "kn-vault")
+        with self.assertRaisesRegex(KiwiError, "which service"):
+            self.c.order(name, "restart", "kn-vault; reboot")
+        with self.assertRaisesRegex(KiwiError, "no such machine"):
+            self.c.order("not-a-machine", "restart", "kn-vault")
+        o = self.c.order(name, "restart", "kn-vault", user="desktop")
+        self.assertEqual(o["state"], "waiting")
+        lines = self.c.answer(name, b"facts\n")
+        self.assertEqual(len(lines), 1)
+        _w, oid, what, target, at, sign = lines[0].split()
+        self.assertEqual((oid, what, target), (o["id"], "restart", "kn-vault"))
+        self.assertEqual(sign, agentmod.order_signature(key, name, oid, what, target, at))
+        self.assertEqual(self.c.answer(name, b"facts\n"), [])               # sent: not again at once
+        now[0] += 150
+        self.assertEqual(len(self.c.answer(name, b"facts\n")), 1)           # no word of it for two minutes: again
+        self.assertEqual(self.c.answer(name, ("facts\nkiwi-done %s 0 \n" % oid).encode()), [])
+        got = self.c.orders(name)[-1]
+        self.assertEqual((got["state"], got["rc"]), ("ok", 0))
+        self.assertIn("asked %s's agent to restart kn-vault" % name, json.dumps(self.c.audit_tail()))
+        self.assertIn("agent: restart kn-vault done", json.dumps(self.c.audit_tail()))
+        # an update that fails says so; one nobody takes in time is gone
+        u = self.c.order(name, "update")
+        self.c.answer(name, b"facts\n")
+        self.c.answer(name, ("kiwi-done %s 1 kiwi-stack: no room\n" % u["id"]).encode())
+        self.assertEqual((self.c.orders(name)[-1]["state"], self.c.orders(name)[-1]["said"]), ("failed", "kiwi-stack: no room"))
+        late = self.c.order(name, "stop", "kn-vault")
+        now[0] += agentmod.ORDER_AGE + 1
+        self.assertEqual(self.c.answer(name, b"facts\n"), [])
+        self.assertEqual(next(x for x in self.c.orders(name) if x["id"] == late["id"])["state"], "gone")
+        self.assertEqual(self.c.answer(name, b"kiwi-last reboot\n"), [])     # a machine going down gets nothing
+        # over HTTP, as the agent asks: its orders as lines with X-Kiwi-Orders, as before without
+        import urllib.request
+        self.c.clock = time.time
+        o = self.c.order(name, "start", "kn-vault")
+        body, when = b"facts\n", int(time.time())
+
+        def post(orders):
+            head = {"X-Kiwi-Host": name, "X-Kiwi-Time": str(when), "X-Kiwi-Boot": "b1", "Content-Type": "text/plain",
+                    "X-Kiwi-Sign": agentmod.signature(key, name, when, "b1", body)}
+            if orders:
+                head["X-Kiwi-Orders"] = "1"
+            with urllib.request.urlopen(urllib.request.Request(self.url + "/api/report", data=body, method="POST", headers=head)) as r:
+                return r.read().decode()
+        self.assertIn('"ok"', post(False))
+        got = post(True)
+        self.assertTrue(got.startswith("order %s start kn-vault " % o["id"]), got)
+
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and
         a machine that was away is looked at, and given what waited for it, the moment it reports."""

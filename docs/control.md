@@ -338,6 +338,8 @@ opens, and the answer is a token) and then sends `Authorization: Bearer <token>`
 | `GET /api/v1/events` | changes as they happen (server-sent events): `change` with `{"mark": …}` at once and whenever the last look, a job, the activity log, the fleet or a waiting apply changed; then ask for what you show. A comment every 20 seconds keeps the stream open through proxies; `gone` when the login ended |
 | `POST /api/jobs` | starts an action as a job, as the page's buttons do: `{action, hosts}` (apply, update, status, plan, check, backup …) gives `{job}`; the History names the computer |
 | `GET /api/jobs/{job}/log?offset=N` | the job's log from `offset` on: `text`, `offset`, `state` (waiting, running, ok, failed) |
+| `POST /api/orders` | an order for a machine's agent: `{host, what, target}` with `what` one of restart, start, stop (`target`: one of the machine's services, like `kn-vault`) or update; gives the order with its `id` |
+| `GET /api/orders?host=NAME` | the orders of the last hours: `state` (waiting, sent, ok, failed, gone), `rc` and `said` when the agent answered |
 | `GET /api/devices` | the phones and laptops on the VPN by name, the groups, the group a new one goes into |
 | `POST /api/devices` | a new device, as the Devices page adds one: `{name, group, split}` gives `{name, config, qr, dns_search}`. `config` holds the device's private key and is shown this once; `dns_search` is the NetworkManager line's domains for a split config |
 | `DELETE /api/devices/{name}` | takes a device off the VPN (a lost phone); the master forgets its key at once |
@@ -490,6 +492,25 @@ It holds names and times, no output and no secret.
 `kiwi-server control watch ~/kiwi/fleet.yaml` prints a line whenever something
 there changes (a look, a job, the activity), until the stream ends. The app
 follows it: it asks again at once instead of once a minute.
+
+## Orders for a machine's agent
+
+Every machine's agent reports to the control node once a minute. The control node's answer can
+carry an order for it: restart, start or stop one of the machine's own services, or run its
+update now. Nothing else: no command, no service outside the machine's stack, and no apply
+(that needs keys the machine does not have). The order is signed with the machine's own key,
+which only the machine and the control node have; the agent runs an order once, refuses one
+older than fifteen minutes, and says what came of it with its next report. So a machine is
+told without a login, also where no SSH reaches it.
+
+```bash
+kiwi-server control order ~/kiwi/fleet.yaml quince restart kn-vault
+kiwi-server control order ~/kiwi/fleet.yaml quince update
+kiwi-server control orders ~/kiwi/fleet.yaml
+```
+
+`order` waits for the answer (up to three minutes); every order and its answer is in the
+*Activity*.
 
 ## One admin: applies run on the control node
 

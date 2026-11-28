@@ -59,7 +59,7 @@ SCRIPT = r'''#!/bin/bash
 d=%(dir)s
 . "$d/conf" || exit 0
 exec 9>/run/kiwi-client-agent.lock; flock -n 9 || exit 0
-body=$(mktemp) || exit 0; resp=$(mktemp) || exit 0; trap 'rm -f "$body" "$resp"' EXIT
+body=$(mktemp) || exit 0; resp=$(mktemp) || exit 0; err=$(mktemp) || exit 0; trap 'rm -f "$body" "$resp" "$err"' EXIT
 d="$d" timeout 45 bash "$d/facts.sh" > "$body" 2>/dev/null
 now=$(date +%%s)
 sum=$(sha256sum "$body" | cut -d' ' -f1)
@@ -67,9 +67,10 @@ sign=$(printf 'client\n%%s\n%%s\n%%s' "$NAME" "$now" "$sum" | openssl dgst -sha2
 if [ -z "$sign" ]; then out="no signature (is openssl there?)"; else
 out=$(curl -sS --max-time 20 --cacert "$d/ca.pem" -o "$resp" -w '%%{http_code}' -X POST \
     -H "Content-Type: text/plain" -H "X-Kiwi-Client: $NAME" -H "X-Kiwi-Time: $now" -H "X-Kiwi-Sign: $sign" \
-    --data-binary @"$body" "$URL/api/client-report" 2>&1 | tail -n 1)
-# refused: the control node's reason with it (a clock that is off, a key that is not this client's)
-case $out in 200|000) ;; *) out="$out $(head -c 160 "$resp" | tr -d '\n')" ;; esac
+    --data-binary @"$body" "$URL/api/client-report" 2>"$err")
+# refused: the control node's reason with it (a clock that is off, a key that is not this client's);
+# not reached: curl's own (no name, no route, a certificate it does not trust)
+case $out in 200) ;; 000|"") out="000 $(tr '\n' ' ' < "$err" | cut -c1-160)" ;; *) out="$out $(head -c 160 "$resp" | tr -d '\n')" ;; esac
 fi
 [ "$out" = "$(cat /run/kiwi-client-agent.last 2>/dev/null)" ] || { logger -t kiwi-client-agent "report to $URL: $out"; echo "$out" > /run/kiwi-client-agent.last; }
 '''

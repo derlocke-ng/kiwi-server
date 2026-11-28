@@ -8041,6 +8041,10 @@ class TestManage(Base):
         self.assertEqual(rc, 0, err)
         self.assertEqual(config.Fleet.load(f.path).raw["clients"], {"desk": {}})
         self.assertIn("no client called pentest-1", self.run_cli("client", "remove", f.path, "pentest-1")[2])
+        before = util.read_text(f.path)
+        self.assertEqual(self.run_cli("client", "remove", f.path, "desk")[0], 0)      # the last one: the block goes
+        self.assertNotIn("clients", util.read_text(f.path))
+        self.assertEqual(util.read_text(f.path), before.replace("clients:\n  desk: {}\n", ""))
 
     def test_a_host_is_taken_out_as_text_and_the_comments_of_the_others_stay(self):
         path = os.path.join(self.tmp, "f.yaml")

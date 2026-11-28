@@ -4931,7 +4931,7 @@ def cmd_client(args):
         before = util.read_text(path)
         raw = yaml.safe_load(before) or {}
         rest = {k: v for k, v in (raw.get("clients") or {}).items() if k != name}
-        text = fleettext.put(before, ["clients"], rest)
+        text = fleettext.put(before, ["clients"], rest) if rest else fleettext.drop(before, ["clients"])
         if text is None:
             raise KiwiError("the fleet file could not be changed in place: take %s out of clients: by hand" % name)
         util.write_text(path, text, 0o600)

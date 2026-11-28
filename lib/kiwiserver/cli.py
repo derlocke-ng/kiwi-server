@@ -4350,7 +4350,7 @@ def cmd_serve(args):
 
 
 ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
-ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber", "member", "members")
+ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber", "desktop", "member", "members")
 # the services that can sign people in with the network's accounts, and where Forgejo & co. come back to
 CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." + h.hostname, "/user/oauth2/accounts/callback"),
                "cloud": ("Nextcloud", lambda s, h: s.get("nc_hostname") or "cloud." + h.hostname, "/apps/user_oidc/code"),
@@ -4456,7 +4456,7 @@ def cmd_accounts(args):
             prefix, " ".join(shlex.quote(x) for x in [what] + rest[:1] + extra))
     elif what in ACCOUNT_OPS:
         name = {"create": "create", "link": "reset", "list": "list", "delete": "delete", "jabber": "jabber",
-                "member": "member", "members": "members"}[what]
+                "desktop": "desktop", "member": "member", "members": "members"}[what]
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); "
                "sudo sh \"$S\" %s" % " ".join(shlex.quote(x) for x in [name] + rest[:3]))
     else:
@@ -4916,8 +4916,9 @@ def cmd_client(args):
             raise KiwiError("%s is a machine of the fleet" % name)
         before = util.read_text(path)
         raw = yaml.safe_load(before) or {}
-        text = fleettext.put(before, ["clients", name], {}) if isinstance(raw.get("clients"), dict) else \
-            fleettext.put(before, ["clients"], {name: {}})
+        block = {"kind": "managed"} if args.managed else {}
+        text = fleettext.put(before, ["clients", name], block) if isinstance(raw.get("clients"), dict) else \
+            fleettext.put(before, ["clients"], {name: block})
         if text is None:
             raise KiwiError("the fleet file could not be changed in place: add `clients: {%s: {}}` at its top level" % name)
         util.write_text(path, text, 0o600)
@@ -4954,7 +4955,8 @@ def cmd_client(args):
         if not m:
             raise KiwiError("the control node's join command is not of a kind this kiwi-server reads")
         ks = clientiso.kickstart(name, img, m.group(2), base64.b64decode(m.group(1)).decode(),
-                                 keymap=args.keymap or "us", timezone=args.timezone or "UTC", passphrase=secret)
+                                 keymap=args.keymap or "us", timezone=args.timezone or "UTC", passphrase=secret,
+                                 managed=(have.get(name) or {}).get("kind") == "managed")
         out = args.output or "%s-%s.iso" % (name, args.system or "bluefin")
         work = tempfile.mkdtemp(prefix="kiwi-client-iso-", dir=os.environ.get("XDG_RUNTIME_DIR") or None)
         try:
@@ -7412,6 +7414,8 @@ def build_parser():
     s.add_argument("--here", action="store_true", help="install: on this computer (sudo asks for its password)")
     s.add_argument("--vpn", action="store_true", help="add: a place on the VPN too; its profile sets the connection up")
     s.add_argument("--full", action="store_true", help="add --vpn: everything through the VPN, not only the network")
+    s.add_argument("--managed", action="store_true", help="add: a company's computer: its people log in with the network's "
+                                                         "accounts, without admin rights (docs/design/clients.md)")
     s.add_argument("--group", help="add --vpn: the VPN group, which decides what it may reach (a pentest system: one of its own)")
     s.add_argument("--system", choices=["silverblue", "bluefin", "bluefin-dx"], help="iso: what is installed (bluefin)")
     s.add_argument("--container", metavar="IMAGE", help="iso: another bootc image to install, like ghcr.io/ublue-os/aurora:stable")

@@ -1629,7 +1629,7 @@ class Control:
         words = [str(a) for a in argv if not str(a).startswith("--")]
         if words and words[0] not in ("list", "invites", "requests"):
             self._accounts_kept = {}          # something changed: the page asks anew
-        if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "connect", "member"):
+        if words and words[0] in ("invite", "revoke", "accept", "deny", "create", "link", "delete", "jabber", "desktop", "connect", "member"):
             self.audit(user, "accounts: %s%s" % ("jabber " if "--jabber" in argv else "", words[0]),
                        name=" ".join(words[1:4] if words[0] == "member" else words[1:2]))
         try:
@@ -2358,7 +2358,9 @@ class Control:
             fleet = config.Fleet.load(self.fleet_path)
             domain = str(fleet.defaults.get("domain") or "home")
             linked = [fedmod.seen(x)[1] for x in fedmod.partners(fleet.dir).values() if fedmod.seen(x)[1] and fedmod.seen(x)[1] != domain]
-            body = clientagent.profile(fleet, name, linked, self._client_unlock(fleet, name))
+            block = clientagent.names(fleet).get(name) or {}
+            managed = clientagent.managed_of(block, self._accounts_url(fleet)) if block.get("kind") == "managed" else None
+            body = clientagent.profile(fleet, name, linked, self._client_unlock(fleet, name), managed)
             return {"body": body.decode(), "sum": hashlib.sha256(body).hexdigest()}
         got = self._read_once("client-profile:" + name, make)
         return got["body"].encode(), got["sum"]
@@ -2508,6 +2510,18 @@ class Control:
         self.audit("control", "the computer %s fetched its agent" % name)
         return clientagent.join_script(fleet, name, machineagent.url(fleet, self._modules()),
                                        util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem")))
+
+    def _accounts_url(self, fleet):
+        """Where the network's accounts are (the machine with the accounts module), or None."""
+        from . import names as namesmod
+        for h in fleet.hosts.values():
+            if "accounts" in ((h.cfg.get(h.role) or {}).get("modules") or []) or "accounts" in (h.modules or []):
+                try:
+                    got = namesmod.name_of(fleet, h, "accounts", self._modules())
+                except Exception:           # names not known here: the module's own default
+                    got = None
+                return "https://%s" % (got or "id." + h.hostname)
+        return None
 
     def _modules(self):
         from . import modules as modmod

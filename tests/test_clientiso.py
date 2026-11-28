@@ -31,6 +31,8 @@ class TestClientIso(unittest.TestCase):
         self.assertIn("bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry "
                       "ghcr.io/ublue-os/bluefin-dx:stable", ks)                           # signed updates from then on
         self.assertNotIn("bootc switch", clientiso.kickstart("desk", clientiso.image("silverblue"), URL, CA))
+        managed = clientiso.kickstart("desk", clientiso.image("bluefin"), URL, CA, managed=True)
+        self.assertIn("firstboot --disable\n", managed)                                    # no local admin on it
         self.assertIn("--passphrase=kiwitest", clientiso.kickstart("desk", clientiso.image("silverblue"), URL, CA,
                                                                     passphrase="kiwitest"))
 

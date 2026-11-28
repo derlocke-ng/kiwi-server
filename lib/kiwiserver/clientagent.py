@@ -23,7 +23,7 @@ NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FRESH = 150         # seconds a report counts as how the computer is now
 SKEW = 300
 LIMIT = 64 * 1024
-VERSION = 4
+VERSION = 5
 ORDERS = ("update", "profile")     # what a client's agent takes; nothing else, never a command
 
 FACTS = r'''
@@ -168,6 +168,66 @@ unlocked() {    # POLICY or nothing: a disk a person bound (bind) kept bound to 
     fi
     key=
 }
+toml_list() { printf '%%s' "$1" | tr ',' '\n' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g; s/^/[/; s/$/]/'; }
+managed() {     # PROFILE: a managed computer: its people log in with the network's accounts (Kanidm's
+    # kanidm-unixd, kept for when it is away), and the network's admins get sudo here
+    local p=$1 idm login admins conf unixd sudo_rules want prof
+    idm=$(sed -n 's/^accounts //p' "$p"); [ -n "$idm" ] || return 0
+    login=$(sed -n 's/^login_groups //p' "$p"); admins=$(sed -n 's/^admin_groups //p' "$p")
+    if ! command -v kanidm_unixd >/dev/null 2>&1 && [ ! -x /usr/sbin/kanidm_unixd ]; then
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            if ! rpm-ostree status 2>/dev/null | grep -q kanidm-unixd-clients; then
+                rpm-ostree install -y --idempotent kanidm-unixd-clients >/dev/null 2>"$err" \
+                    || { say "kanidm-unixd could not be layered: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+            fi
+            # it comes with the next start: now, while nobody is logged in; else at the next restart
+            if loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qv '^gdm\|^$'; then
+                say "kanidm-unixd is layered: logins with the network's accounts from the next start"
+            else
+                say "kanidm-unixd is layered: restarting now, nobody is logged in"; systemctl reboot
+            fi
+            return 0
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q kanidm-unixd-clients >/dev/null 2>"$err" || { say "kanidm-unixd did not install: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+        else
+            say "logins with the network's accounts are for Fedora-based computers (kanidm-unixd): not on this one"; return 0
+        fi
+    fi
+    mkdir -p /etc/kanidm
+    [ -f /etc/kanidm/ca.pem ] && cmp -s "$d/ca.pem" /etc/kanidm/ca.pem || install -m 0644 "$d/ca.pem" /etc/kanidm/ca.pem
+    conf=$(printf 'uri = "%%s"\nca_path = "/etc/kanidm/ca.pem"' "$idm")
+    unixd=$(printf "version = '2'\ndefault_shell = \"/bin/bash\"\nhome_alias = \"name\"\nuid_attr_map = \"name\"\ngid_attr_map = \"name\"\n\n[kanidm]\npam_allowed_login_groups = %%s" "$(toml_list "${login:-computers}")")
+    changed=
+    [ "$(cat /etc/kanidm/config 2>/dev/null)" = "$conf" ] || { printf '%%s\n' "$conf" > /etc/kanidm/config; changed=1; }
+    [ "$(cat /etc/kanidm/unixd 2>/dev/null)" = "$unixd" ] || { printf '%%s\n' "$unixd" > /etc/kanidm/unixd; changed=1; }
+    # PAM and nsswitch through Kanidm: authselect's own way, a profile of the sssd one (Kanidm's book)
+    if [ "$(authselect current --raw 2>/dev/null | cut -d' ' -f1)" != custom/kanidm ]; then
+        prof=/etc/authselect/custom/kanidm
+        [ -d "$prof" ] || authselect create-profile kanidm -b sssd >/dev/null 2>&1 || { say "authselect could not make its profile"; return 1; }
+        for f in system-auth password-auth; do
+            sed -i -e 's/^auth\([[:space:]]\+\)sufficient\([[:space:]]\+\)pam_sss\.so.*/auth        sufficient                                   pam_kanidm.so ignore_unknown_user/' \
+                   -e 's/^account\([[:space:]]\+\).*pam_sss\.so.*/account     sufficient                                   pam_kanidm.so ignore_unknown_user/' \
+                   -e '/^password.*pam_sss\.so/d' -e '/pam_sss_gss\.so/d' \
+                   -e 's/^session\([[:space:]]\+\)optional\([[:space:]]\+\)pam_sss\.so.*/session     optional                                     pam_kanidm.so/' "$prof/$f"
+        done
+        sed -i -e '/^\(passwd\|group\):/ s/\bsss\b/kanidm/' -e '/^\(passwd\|group\):/! s/ sss\b//' "$prof/nsswitch.conf"
+        authselect select custom/kanidm --force >/dev/null 2>"$err" || { say "authselect: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+        changed=1
+    fi
+    systemctl enable -q --now kanidm-unixd.service kanidm-unixd-tasks.service 2>/dev/null
+    [ -n "$changed" ] && systemctl restart kanidm-unixd.service kanidm-unixd-tasks.service 2>/dev/null
+    # sudo for the network's admins, here: their groups as Kanidm names them
+    sudo_rules=$(printf '%%s' "${admins:-admins}" | tr ',' '\n' | grep -v '^$' | sed 's/.*/%%& ALL=(ALL) ALL/')
+    want="# kiwi-server: the network's admins on this computer (its profile)
+$sudo_rules"
+    if [ "$(cat /etc/sudoers.d/kiwi-network 2>/dev/null)" != "$want" ]; then
+        printf '%%s\n' "$want" > /etc/sudoers.d/kiwi-network.new && chmod 0440 /etc/sudoers.d/kiwi-network.new
+        if visudo -cf /etc/sudoers.d/kiwi-network.new >/dev/null 2>&1; then mv -f /etc/sudoers.d/kiwi-network.new /etc/sudoers.d/kiwi-network
+        else rm -f /etc/sudoers.d/kiwi-network.new; say "the sudo rule for the network's admins did not pass visudo: left out"; fi
+    fi
+    [ -n "$changed" ] && say "logins with the network's accounts ($idm; groups: ${login:-computers}; sudo: ${admins:-admins})"
+    return 0
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
     local p=$1 ca f upd vpn con mode search tmp
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
@@ -180,6 +240,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         fi
     fi
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
+    [ "$(sed -n 's/^kind //p' "$p")" = managed ] && managed "$p"
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -487,7 +548,25 @@ def vpn_conf_path(fleet, name):
     return fleet.resolve_path("secrets/devices/%s.conf" % name)
 
 
-def profile(fleet, name, linked=(), unlock=None):
+def managed_of(block, accounts_url):
+    """A managed computer's part of its profile: where its people's accounts are, who may log in,
+    who gets sudo. None for a personal one, or without the network's accounts."""
+    if str((block or {}).get("kind") or "personal") != "managed":
+        return None
+    if not accounts_url:
+        raise KiwiError("a managed computer needs the network's accounts (the accounts module) for its logins")
+
+    def groups(key, default):
+        got = block.get(key) or [default]
+        got = [got] if isinstance(got, str) else got
+        for g in got:
+            if not NAME.match(str(g)):
+                raise KiwiError("%s: %r is not a plain group name" % (key, g))
+        return [str(g) for g in got]
+    return {"accounts": accounts_url, "login": groups("login_groups", "computers"), "admins": groups("admin_groups", "admins")}
+
+
+def profile(fleet, name, linked=(), unlock=None, managed=None):
     """The client's profile, as the agent reads it: one fact a line. The network's CA; its VPN (a
     WireGuard config, as NetworkManager imports it) when it has a place on the VPN, with how much
     goes through it: `split` only the network (its names to its DNS, the Internet as it was), `full`
@@ -507,6 +586,9 @@ def profile(fleet, name, linked=(), unlock=None):
         full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in data.decode(errors="replace").splitlines())
         lines += ["vpn " + base64.b64encode(data).decode(), "vpn_mode " + ("full" if full else "split"),
                   "search " + ",".join(["~" + domain] + ["~" + d for d in sorted(set(linked)) if d and d != domain])]
+    if managed:         # a managed computer: logins with the network's accounts, sudo for its admins
+        lines += ["kind managed", "accounts " + managed["accounts"], "login_groups " + ",".join(managed["login"]),
+                  "admin_groups " + ",".join(managed["admins"])]
     if unlock:          # its disk's policy (unlock_tree): kept bound by the agent once a person bound it
         import json
         lines.append("unlock " + base64.b64encode(json.dumps(unlock, sort_keys=True, separators=(",", ":")).encode()).decode())

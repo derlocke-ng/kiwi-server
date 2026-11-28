@@ -456,6 +456,17 @@ The agent keeps itself current: when the control node has a newer one, it says s
 computer's profile, and the agent fetches it, checks its signature and installs it. An agent of
 2.330 cannot do that yet: run its computer's *Join command* (Devices) once more.
 
+**A managed computer** (a company's): `client add NAME --managed` (or `kind: managed` in its
+block). Its people log in with their accounts of the network (the accounts module, Kanidm), and
+have no admin rights there; the network's admins get sudo. On the Accounts page, *Let log in* in
+the *Computers* column says who may log in there (the Kanidm group `computers`; `login_groups` in
+the block names others), and *Make admin* gives sudo (`admin_groups`). The agent sets the computer
+up from its profile: Kanidm's own client (`kanidm-unixd`, layered on Bluefin and Silverblue, which
+counts from the next start: the agent restarts the computer then, only while nobody is logged
+in), Kanidm's authselect profile, and the sudo rule. A login is kept for when the computer is away
+from the network. Install media for a managed computer create no local user. For Fedora-based
+systems; what is installed and how the desktop is set (the policy) comes next.
+
 **A new computer from a stick:** `kiwi-server client iso` makes install media that installs
 Silverblue, Bluefin or Bluefin-DX and joins the network at the computer's first start:
 

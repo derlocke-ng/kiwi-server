@@ -1469,10 +1469,12 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <form class="card row" method="post" action="/accounts/create" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
 <div><label for="acc-name">Make one yourself</label><input id="acc-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" placeholder="lowercase letters and digits" required></div>
 <button>Make the account</button></form>
-{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">Admin</th><th></th></tr></thead><tbody>
+{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th title="May log in to the network's managed computers with this account">Computers</th><th title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there; sudo on the managed computers">Admin</th><th></th></tr></thead><tbody>
 {% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
 {% if play_group %}<td><form class="inline" method="post" action="/accounts/games">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
 <input type="hidden" name="note" value="{{ 'off' if p.games else 'on' }}"><button title="Members of {{ play_group }} start and stop the game servers at the game page">{{ "In · leave out" if p.games else "Let in" }}</button></form></td>{% endif %}
+<td><form class="inline" method="post" action="/accounts/computers">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
+<input type="hidden" name="note" value="{{ 'off' if p.computers else 'on' }}"><button title="Logs in to the network's managed computers with this account and its password">{{ "Logs in · leave out" if p.computers else "Let log in" }}</button></form></td>
 <td><form class="inline" method="post" action="/accounts/admins"{% if not p.admin %} onsubmit="return confirm('Make {{ p.name }} an admin of Forgejo, Nextcloud and Immich? It takes effect at the next sign-in there.')"{% endif %}>{{ tok }}
 <input type="hidden" name="name" value="{{ p.name }}"><input type="hidden" name="note" value="{{ 'off' if p.admin else 'on' }}">
 <button title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">{{ "Admin · take back" if p.admin else "Make admin" }}</button></form></td>
@@ -3547,7 +3549,8 @@ def make_app(control: Control):
                     people.append({"name": name, "display": (p.get("displayname") or [name])[0],
                                    "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or []),
                                    "games": bool(PLAY_HOST) and any(g.startswith(PLAY_GROUP + "@") for g in p.get("memberof") or []),
-                                   "admin": any(g.startswith("admins@") for g in p.get("memberof") or [])})
+                                   "admin": any(g.startswith("admins@") for g in p.get("memberof") or []),
+                                   "computers": any(g.startswith("computers@") for g in p.get("memberof") or [])})
                 invites = control.accounts_read("invites") or []
                 requests = control.accounts_read("requests") or []
             except KiwiError as e:
@@ -3620,6 +3623,9 @@ def make_app(control: Control):
             return {}
         if what == "admins":                        # the network's admins: Forgejo, Nextcloud, Immich
             control.accounts("member", "admins", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
+            return {}
+        if what == "computers":                     # who logs in to the network's managed computers
+            control.accounts("desktop", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
             return {}
         if what == "games" and PLAY_HOST:          # who may use the game page: its group
             control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)

@@ -76,6 +76,9 @@ class TestClientProfileAndOrders(unittest.TestCase):
                        .replace("/usr/local/share/ca-certificates", self.t + "/no-certificates")
                        .replace("/etc/default/grub.d", self.t + "/grub.d")
                        .replace("/etc/systemd/system", self.t + "/units")
+                       .replace("/etc/kanidm", self.t + "/sys/kanidm")
+                       .replace("/etc/authselect", self.t + "/sys/authselect")
+                       .replace("/etc/sudoers.d", self.t + "/sys/sudoers.d")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
         for path in ("/etc/", "/usr/local/share", "/var/lib/"):
             self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
@@ -226,6 +229,97 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.run_agent()
         self.assertIn("luks unbind -d /dev/vda3 -s 2 -f", self.read("clevis"))
         self.assertEqual(self.read("state/unlock.slot"), "")
+
+    SSSD_AUTH = (
+        "auth        required                                     pam_env.so\n"
+        "auth        sufficient                                   pam_unix.so {if not \"without-nullok\":nullok}\n"
+        "auth        sufficient                                   pam_sss.so forward_pass\n"
+        "auth        required                                     pam_deny.so\n"
+        "account     required                                     pam_unix.so\n"
+        "account     [default=bad success=ok user_unknown=ignore] pam_sss.so\n"
+        "password    sufficient                                   pam_sss.so use_authtok\n"
+        "session     optional                                     pam_sss.so\n")
+    SSSD_NSS = "passwd:     files sss systemd\ngroup:      files sss systemd\nnetgroup:   files sss\nsudoers:    files sss\n"
+
+    def managed_stubs(self, current="sssd"):
+        for d in ("kanidm", "authselect", "sudoers.d"):
+            os.makedirs(os.path.join(self.t, "sys", d), exist_ok=True)
+        self.w("auth-current", current + "\n")
+        self.w("bin/kanidm_unixd", "exit 0\n", 0o755)
+        self.w("bin/visudo", "exit 0\n", 0o755)
+        self.w("bin/systemctl", 'echo "systemctl $*" >> %s/said\n' % self.t, 0o755)
+        self.w("bin/authselect", (
+            'echo "authselect $*" >> %(t)s/said\n'
+            'case "$1" in current) cat %(t)s/auth-current ;;\n'
+            '  create-profile) p=%(t)s/sys/authselect/custom/kanidm; mkdir -p $p; printf %%s "$SA" > $p/system-auth;'
+            ' printf %%s "$SA" > $p/password-auth; printf %%s "$NS" > $p/nsswitch.conf ;;\n'
+            '  select) echo custom/kanidm > %(t)s/auth-current ;; esac\n') % {"t": self.t}, 0o755)
+
+    def run_managed(self):
+        import hashlib
+        body = self.profile.decode().replace("network home", "network home\nkind managed\naccounts https://id.quince.home\n"
+                                             "login_groups computers,staff\nadmin_groups admins", 1).encode()
+        self.w("profile", body.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
+        self.answer("profile " + hashlib.sha256(body).hexdigest())
+        path = os.path.join(self.t, "bin", "kiwi-client-agent")
+        with open(path, "w") as f:
+            f.write(self.script)
+        os.chmod(path, 0o755)
+        r = subprocess.run([path], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"], SA=self.SSSD_AUTH,
+                                            NS=self.SSSD_NSS), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_managed_computer_logs_in_with_the_networks_accounts(self):
+        self.managed_stubs()
+        self.run_managed()
+        self.assertEqual(self.read("sys/kanidm/config"), 'uri = "https://id.quince.home"\nca_path = "%s/sys/kanidm/ca.pem"\n' % self.t)
+        unixd = self.read("sys/kanidm/unixd")
+        self.assertIn("version = '2'\n", unixd)
+        self.assertIn('uid_attr_map = "name"', unixd)
+        self.assertIn('[kanidm]\npam_allowed_login_groups = ["computers", "staff"]\n', unixd)
+        auth = self.read("sys/authselect/custom/kanidm/system-auth")
+        self.assertIn("auth        sufficient                                   pam_kanidm.so ignore_unknown_user", auth)
+        self.assertIn("account     sufficient                                   pam_kanidm.so ignore_unknown_user", auth)
+        self.assertIn("session     optional                                     pam_kanidm.so", auth)
+        self.assertNotIn("pam_sss", auth)
+        self.assertIn("pam_unix.so", auth)                                   # the computer's own accounts still work
+        nss = self.read("sys/authselect/custom/kanidm/nsswitch.conf")
+        self.assertIn("passwd:     files kanidm systemd", nss)
+        self.assertIn("netgroup:   files\n", nss)
+        self.assertIn("authselect select custom/kanidm --force", self.read("said"))
+        self.assertIn("enable -q --now kanidm-unixd.service kanidm-unixd-tasks.service", self.read("said"))
+        self.assertEqual(self.read("sys/sudoers.d/kiwi-network"), "# kiwi-server: the network's admins on this computer "
+                         "(its profile)\n%admins ALL=(ALL) ALL\n")
+        # once more, nothing changed: authselect is not run again
+        os.remove(os.path.join(self.t, "said"))
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.run_managed()
+        self.assertNotIn("authselect select", self.read("said"))
+
+    def test_a_managed_computer_without_kanidm_layers_it_and_restarts_only_when_nobody_is_on(self):
+        self.managed_stubs()
+        os.remove(os.path.join(self.t, "bin", "kanidm_unixd"))
+        self.w("bin/rpm-ostree", 'echo "rpm-ostree $*" >> %s/said\n' % self.t, 0o755)
+        self.w("bin/loginctl", "echo '2 1000 anna seat0 tty2'\n", 0o755)
+        self.run_managed()
+        self.assertIn("rpm-ostree install -y --idempotent kanidm-unixd-clients", self.read("said"))
+        self.assertNotIn("reboot", self.read("said"))                         # anna is logged in
+        self.assertIn("from the next start", self.read("logged"))
+        self.w("bin/loginctl", "echo 'c1 42 gdm seat0 tty1'\n", 0o755)
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.run_managed()
+        self.assertIn("systemctl reboot", self.read("said"))                  # nobody but the login screen
+
+    def test_managed_of_reads_the_block(self):
+        self.assertIsNone(clientagent.managed_of({}, "https://id.x"))
+        self.assertEqual(clientagent.managed_of({"kind": "managed"}, "https://id.x"),
+                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"]})
+        self.assertEqual(clientagent.managed_of({"kind": "managed", "login_groups": "staff"}, "https://id.x")["login"], ["staff"])
+        with self.assertRaisesRegex(KiwiError, "needs the network's accounts"):
+            clientagent.managed_of({"kind": "managed"}, None)
+        with self.assertRaisesRegex(KiwiError, "not a plain group name"):
+            clientagent.managed_of({"kind": "managed", "admin_groups": ["a b"]}, "https://id.x")
 
     def test_orders_update_and_profile_and_nothing_else(self):
         at = int(time.time())

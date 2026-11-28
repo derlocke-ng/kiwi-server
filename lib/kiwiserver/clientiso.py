@@ -59,10 +59,12 @@ def image(system, override=None):
     return SYSTEMS[system]
 
 
-def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en_US.UTF-8", passphrase=None):
+def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en_US.UTF-8", passphrase=None,
+              managed=False):
     """The kickstart: the image onto an encrypted btrfs disk (every disk of the computer is wiped),
-    the network by DHCP, no user (GNOME's first start asks for one), and the join at the first
-    start."""
+    the network by DHCP, no user (GNOME's first start asks for one: its person is its admin; a
+    managed computer has none, its people log in with the network's accounts), and the join at the
+    first start."""
     if not re.fullmatch(r"https://[^\s'\"]+/api/client/join/[A-Za-z0-9_-]{16,64}", join_url or ""):
         raise KiwiError("the join address is not one of the control page's")
     if "BEGIN CERTIFICATE" not in (ca_pem or ""):
@@ -75,7 +77,7 @@ def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en
         if not passphrase or "'" in passphrase or "\n" in passphrase:
             raise KiwiError("the passphrase from --passphrase-file is empty or has a quote or a line break")
         secret = " --passphrase=%s" % shlex.quote(passphrase)
-    return """# kiwi-server: install media for %(name)s
+    return """# kiwi-server: install media for %(name)s%(kind)s
 graphical
 lang %(lang)s
 keyboard --vckeymap=%(keymap)s
@@ -86,7 +88,7 @@ zerombr
 clearpart --all --initlabel --disklabel=gpt
 autopart --type=btrfs --encrypted --luks-version=luks2%(secret)s
 ostreecontainer --url=%(img)s --transport=registry --no-signature-verification
-firstboot --enable
+firstboot --%(firstboot)s
 reboot --eject
 
 %%post --erroronfail
@@ -103,7 +105,8 @@ systemctl enable kiwi-join-once.service
 %(sign)s%%end
 """ % {"name": name, "lang": lang, "keymap": keymap, "timezone": timezone, "secret": secret, "img": img,
        "ca": ca_pem if ca_pem.endswith("\n") else ca_pem + "\n", "url": join_url, "unit": JOIN_UNIT,
-       "script": JOIN_SCRIPT,
+       "script": JOIN_SCRIPT, "firstboot": "disable" if managed else "enable",
+       "kind": " (managed: no local user, its people log in with the network's accounts)" if managed else "",
        "sign": ("# updates checked against the image's signature from now on\n"
                 "bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry %s\n" % img)
        if signed(img) else ""}

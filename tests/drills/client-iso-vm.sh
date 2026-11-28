@@ -27,7 +27,8 @@ before=$(mktemp "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kiwi-fleet.XXXXXX") || e
 secret=$(mktemp "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kiwi-pass.XXXXXX") || exit 2
 done_() {
     "$KIWI" client remove "$fleet" "$name" >/dev/null 2>&1
-    [ -s "$before" ] && ! cmp -s "$before" "$fleet" && cp "$before" "$fleet" && "$KIWI" control push "$fleet" >/dev/null 2>&1
+    [ -s "$before" ] && ! cmp -s "$before" "$fleet" && cp "$before" "$fleet"
+    "$KIWI" control push "$fleet" >/dev/null 2>&1      # the control node forgets NAME too (it listed it after a run)
     rm -f "$before" "$secret"; vm_stop 2>/dev/null; true
 }
 trap done_ EXIT

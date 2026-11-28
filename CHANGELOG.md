@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.332.0 — people's computers: install media, managed computers, the kill switch's policy
+
+- **`kiwi-server client iso FLEET NAME --base INSTALLER.iso`** makes install media from Fedora's
+  installer: it installs Silverblue, Bluefin, Bluefin-DX or Phoenix Desktop (`phoenix`,
+  `phoenix-dx`: Bluefin with clevis in its boot system) straight from its registry onto an
+  encrypted disk, powers off when done, and the computer joins the network at its first start
+  with a one-time code on the stick (14 days, `--days`). Signed images are switched to their
+  signed origin at the end of the install. `--admin-key` adds the IT department's own way in
+  (a local admin by key only, sudo, SSH). Drilled on sh3: Bluefin and Phoenix install in 11
+  minutes, open with the passphrase, join; Phoenix's disk then opens by the network's ring
+  alone, nobody at its prompt (30 s).
+- **Managed computers** (`client add NAME --managed`, `kind: managed`): logins with the
+  network's accounts (Kanidm's own client, layered), sudo for the network's admins, the
+  Accounts page's *Computers* column (who may log in, who is admin), their apps from Flathub
+  (`apps`), only the network's admins install software (`lock_software`), GNOME's settings and
+  locks (`desktop_settings`, `desktop_locks`). Tested against stand-ins, not on a VM yet.
+- **The kill switch's policy**: with kiwi-killswitch 0.3.0 on a computer, the agent writes
+  `/etc/kiwi-killswitch/network.json` from the profile: the modes `full` (everything through the
+  VPN, or through one of the network's gateways on its LAN) and `network` (only the network; the
+  Internet the computer's own way), every name at the network's DNS in both; the gateways with
+  every MAC of a moving address; `killswitch_modes` / `killswitch_mode` in the client's block. A
+  managed computer is fixed to `full`. The person's own VPNs stay theirs (kiwi-killswitch's
+  `own`). Machines report their MAC for it.
+- **Every name at the network's DNS** (its blocklist) while a computer's VPN is up, full or not
+  (it was only the network's names unless full).
+- **The join link** for Kiwi Agent (kiwi-agent, in the catalog): the code and the CA's sum;
+  `client invite --link`; `GET /api/client/ca`.
+- **The agent's bind** layers nothing where clevis is already in the image (Phoenix): the older
+  agent failed there with rpm-ostree's "No packages in transaction".
+- `client list --porcelain` stays JSON when this computer is off the VPN (the note about the
+  control node's home address went to stdout).
+- kiwi-modules 0.144.0: the Kanidm groups `computers` and `admins`, `accounts.sh desktop`.
+
 ## 2.331.0 — the app on a person's computer, and its disk opened by the rings
 
 - **Kiwi Network** (`kiwi-desktop`), a small app on a client computer, installed with kiwi-server's

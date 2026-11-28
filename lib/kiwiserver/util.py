@@ -146,6 +146,14 @@ def log(msg):
         print(msg)
 
 
+def note(msg):
+    """A say on stderr: for what a command notices on the way, so that its own output (JSON with
+    --porcelain) stays clean (28 Nov 2026: the note about the control node's home address broke
+    `client list --porcelain` for every script reading it)."""
+    if not QUIET:
+        print(":: %s" % msg, file=sys.stderr)
+
+
 def warn(msg):
     print("warning: %s" % msg, file=sys.stderr)
 

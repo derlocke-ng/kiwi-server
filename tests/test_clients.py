@@ -2,6 +2,7 @@
 against a stand-in curl, its facts, its signature both sides make, and what the install script
 carries (never the key)."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from kiwiserver import clientagent, machineagent  # noqa: E402
 from kiwiserver.util import KiwiError  # noqa: E402
 
 KEY = "a-client-key-of-the-test"
+CA_TEXT = "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"
 
 
 class FakeFleet:
@@ -76,6 +78,13 @@ class TestClientProfileAndOrders(unittest.TestCase):
                        .replace("/usr/local/share/ca-certificates", self.t + "/no-certificates")
                        .replace("/etc/default/grub.d", self.t + "/grub.d")
                        .replace("/etc/systemd/system", self.t + "/units")
+                       .replace("/etc/kanidm", self.t + "/sys/kanidm")
+                       .replace("/etc/authselect", self.t + "/sys/authselect")
+                       .replace("/etc/sudoers.d", self.t + "/sys/sudoers.d")
+                       .replace("/etc/polkit-1", self.t + "/sys/polkit-1")
+                       .replace("/etc/dconf", self.t + "/sys/dconf")
+                       .replace("/etc/kiwi-killswitch", self.t + "/sys/kiwi-killswitch")
+                       .replace("/usr/local/sbin/kiwi-killswitchd", self.t + "/bin/kiwi-killswitchd")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
         for path in ("/etc/", "/usr/local/share", "/var/lib/"):
             self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
@@ -107,7 +116,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.assertIn("updated", self.read("trust"))
         self.assertEqual(self.read("imported"), self.conf)                           # the VPN, imported as kiwi-home
         nm = self.read("nm")
-        self.assertIn("connection modify kiwi-home ipv4.never-default yes ipv4.dns-search ~home", nm)
+        self.assertIn("connection modify kiwi-home ipv4.never-default yes ipv4.dns-search ~.,~home ipv4.dns-priority -50", nm)
         self.assertIn("connection up kiwi-home", nm)
         self.assertFalse([f for f in os.listdir(os.path.join(self.t, "run")) if f.startswith("kiwi-client.")])  # the config left no copy
         self.assertIn("its profile is applied", self.read("logged"))
@@ -226,6 +235,198 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.run_agent()
         self.assertIn("luks unbind -d /dev/vda3 -s 2 -f", self.read("clevis"))
         self.assertEqual(self.read("state/unlock.slot"), "")
+
+    SSSD_AUTH = (
+        "auth        required                                     pam_env.so\n"
+        "auth        sufficient                                   pam_unix.so {if not \"without-nullok\":nullok}\n"
+        "auth        sufficient                                   pam_sss.so forward_pass\n"
+        "auth        required                                     pam_deny.so\n"
+        "account     required                                     pam_unix.so\n"
+        "account     [default=bad success=ok user_unknown=ignore] pam_sss.so\n"
+        "password    sufficient                                   pam_sss.so use_authtok\n"
+        "session     optional                                     pam_sss.so\n")
+    SSSD_NSS = "passwd:     files sss systemd\ngroup:      files sss systemd\nnetgroup:   files sss\nsudoers:    files sss\n"
+
+    def managed_stubs(self, current="sssd"):
+        for d in ("kanidm", "authselect", "sudoers.d", "polkit-1/rules.d"):
+            os.makedirs(os.path.join(self.t, "sys", d), exist_ok=True)
+        self.w("auth-current", current + "\n")
+        self.w("bin/kanidm_unixd", "exit 0\n", 0o755)
+        self.w("bin/visudo", "exit 0\n", 0o755)
+        self.w("bin/systemctl", 'echo "systemctl $*" >> %s/said\n' % self.t, 0o755)
+        self.w("bin/authselect", (
+            'echo "authselect $*" >> %(t)s/said\n'
+            'case "$1" in current) cat %(t)s/auth-current ;;\n'
+            '  create-profile) p=%(t)s/sys/authselect/custom/kanidm; mkdir -p $p; printf %%s "$SA" > $p/system-auth;'
+            ' printf %%s "$SA" > $p/password-auth; printf %%s "$NS" > $p/nsswitch.conf ;;\n'
+            '  select) echo custom/kanidm > %(t)s/auth-current ;; esac\n') % {"t": self.t}, 0o755)
+
+    def run_managed(self):
+        import hashlib
+        body = self.profile.decode().replace("network home", "network home\nkind managed\naccounts https://id.quince.home\n"
+                                             "login_groups computers,staff\nadmin_groups admins\nlock_software yes\n"
+                                             "apps org.mozilla.firefox,org.libreoffice.LibreOffice", 1).encode()
+        self.w("profile", body.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
+        self.answer("profile " + hashlib.sha256(body).hexdigest())
+        path = os.path.join(self.t, "bin", "kiwi-client-agent")
+        with open(path, "w") as f:
+            f.write(self.script)
+        os.chmod(path, 0o755)
+        r = subprocess.run([path], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"], SA=self.SSSD_AUTH,
+                                            NS=self.SSSD_NSS), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_managed_computer_logs_in_with_the_networks_accounts(self):
+        self.managed_stubs()
+        self.run_managed()
+        self.assertEqual(self.read("sys/kanidm/config"), 'uri = "https://id.quince.home"\nca_path = "%s/sys/kanidm/ca.pem"\n' % self.t)
+        unixd = self.read("sys/kanidm/unixd")
+        self.assertIn("version = '2'\n", unixd)
+        self.assertIn('uid_attr_map = "name"', unixd)
+        self.assertIn('[kanidm]\npam_allowed_login_groups = ["computers", "staff"]\n', unixd)
+        auth = self.read("sys/authselect/custom/kanidm/system-auth")
+        self.assertIn("auth        sufficient                                   pam_kanidm.so ignore_unknown_user", auth)
+        self.assertIn("account     sufficient                                   pam_kanidm.so ignore_unknown_user", auth)
+        self.assertIn("session     optional                                     pam_kanidm.so", auth)
+        self.assertNotIn("pam_sss", auth)
+        self.assertIn("pam_unix.so", auth)                                   # the computer's own accounts still work
+        nss = self.read("sys/authselect/custom/kanidm/nsswitch.conf")
+        self.assertIn("passwd:     files kanidm systemd", nss)
+        self.assertIn("netgroup:   files\n", nss)
+        self.assertIn("authselect select custom/kanidm --force", self.read("said"))
+        self.assertIn("enable -q --now kanidm-unixd.service kanidm-unixd-tasks.service", self.read("said"))
+        self.assertEqual(self.read("sys/sudoers.d/kiwi-network"), "# kiwi-server: the network's admins on this computer "
+                         "(its profile)\n%admins ALL=(ALL) ALL\n")
+        # once more, nothing changed: authselect is not run again
+        os.remove(os.path.join(self.t, "said"))
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.run_managed()
+        self.assertNotIn("authselect select", self.read("said"))
+
+    def test_a_managed_computer_without_kanidm_layers_it_and_restarts_only_when_nobody_is_on(self):
+        self.managed_stubs()
+        os.remove(os.path.join(self.t, "bin", "kanidm_unixd"))
+        self.w("bin/rpm-ostree", 'echo "rpm-ostree $*" >> %s/said\n' % self.t, 0o755)
+        self.w("bin/loginctl", "echo '2 1000 anna seat0 tty2'\n", 0o755)
+        self.run_managed()
+        self.assertIn("rpm-ostree install -y --idempotent kanidm-unixd-clients", self.read("said"))
+        self.assertNotIn("reboot", self.read("said"))                         # anna is logged in
+        self.assertIn("from the next start", self.read("logged"))
+        self.w("bin/loginctl", "echo 'c1 42 gdm seat0 tty1'\n", 0o755)
+        os.remove(os.path.join(self.t, "state", "profile.sum"))
+        self.run_managed()
+        self.assertIn("systemctl reboot", self.read("said"))                  # nobody but the login screen
+
+    def test_a_managed_computer_gets_its_apps_and_only_admins_install(self):
+        self.managed_stubs()
+        self.w("bin/flatpak", 'echo "flatpak $*" >> %s/said\ncase "$1" in info) [ "$3" = org.mozilla.firefox ] ;; esac\n' % self.t, 0o755)
+        self.run_managed()
+        said = self.read("said")
+        self.assertIn("flatpak remote-add --system --if-not-exists flathub", said)
+        self.assertIn("flatpak install --system -y --noninteractive flathub org.libreoffice.LibreOffice", said)
+        self.assertNotIn("install --system -y --noninteractive flathub org.mozilla.firefox", said)     # there already
+        rules = self.read("sys/polkit-1/rules.d/49-kiwi-managed.rules")
+        self.assertIn('!(subject.isInGroup("wheel") || subject.isInGroup("admins"))', rules)
+        self.assertIn('"org.freedesktop.Flatpak."', rules)
+        self.assertIn("return polkit.Result.NO;", rules)
+        r = subprocess.run(["node", "--check", "-"], input=rules, text=True, capture_output=True) if shutil.which("node") else None
+        if r is not None:
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_managed_computers_desktop_is_set_and_locked(self):
+        import base64
+        self.managed_stubs()
+        self.w("bin/dconf", 'echo "dconf $*" >> %s/said\n' % self.t, 0o755)
+        keys, locks = clientagent.dconf_files({"desktop_settings": {"org/gnome/desktop/screensaver": {"lock-enabled": True}},
+                                               "desktop_locks": ["org/gnome/desktop/screensaver/lock-enabled"]})
+        self.profile = self.profile.decode().replace("network home", "network home\ndconf %s\ndconf_locks %s" % (
+            base64.b64encode(keys.encode()).decode(), base64.b64encode(locks.encode()).decode()), 1).encode()
+        self.run_managed()
+        self.assertEqual(self.read("sys/dconf/profile/user"), "user-db:user\nsystem-db:local\n")
+        self.assertIn("[org/gnome/desktop/screensaver]\nlock-enabled=true\n", self.read("sys/dconf/db/local.d/50-kiwi"))
+        self.assertEqual(self.read("sys/dconf/db/local.d/locks/50-kiwi"), "/org/gnome/desktop/screensaver/lock-enabled\n")
+        self.assertIn("dconf update", self.read("said"))
+
+    def test_dconf_files_refuse_what_is_no_setting(self):
+        self.assertIsNone(clientagent.dconf_files({}))
+        for bad in ({"desktop_settings": {"org/gnome/x": {"a\nb": "1"}}}, {"desktop_settings": {"../etc": {"a": "1"}}},
+                    {"desktop_locks": ["not a key"]}, {"desktop_settings": {"org/gnome/x": {"a": "1\n[evil]"}}}):
+            with self.assertRaises(KiwiError):
+                clientagent.dconf_files(bad)
+
+    def test_the_kill_switch_policy(self):
+        conf = "[Interface]\nAddress = 10.9.0.40/32\nDNS = 10.9.0.1\n[Peer]\nAllowedIPs = 10.9.0.0/16, 10.20.0.0/16\n"
+        gws = [{"name": "lime or papaya", "ip": "192.168.2.69", "macs": ["aa:bb:cc:dd:ee:01"]}]
+        p = clientagent.killswitch_policy("home", "kiwi-home", {}, conf, gws, ["home"])
+        self.assertEqual(p, {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["full", "network", "off"],
+                             "default": "network", "locked": False, "gateways": gws, "dns": ["10.9.0.1"],
+                             "mesh": ["10.9.0.0/16", "10.20.0.0/16"], "domains": ["home"]})
+        full = conf.replace("10.9.0.0/16, 10.20.0.0/16", "0.0.0.0/0")
+        self.assertEqual(clientagent.killswitch_policy("h", "k", {}, full, [], [])["default"], "full")      # added with --full
+        m = clientagent.killswitch_policy("home", "kiwi-home", {"kind": "managed"}, full, [], ["home"])
+        self.assertEqual((m["modes"], m["default"], m["locked"], m["mesh"]), (["full"], "full", True, ["10.9.0.0/16"]))
+        got = clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["off", "network"]}, conf, [], [])
+        self.assertEqual((got["modes"], got["default"]), (["network", "off"], "network"))
+        self.assertEqual(clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["off"]}, conf, [], [])["default"], "off")
+        with self.assertRaisesRegex(KiwiError, "not one of killswitch_modes"):
+            clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["full"], "killswitch_mode": "off"}, conf, [], [])
+        with self.assertRaisesRegex(KiwiError, "killswitch_modes"):
+            clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["split"]}, conf, [], [])
+        self.assertIsNone(clientagent.killswitch_policy("h", "k", {}, "", [], []))
+
+    def test_the_networks_gateways_with_every_mac_of_the_moving_address(self):
+        hosts = [("papaya", ["gateway", "vip"], "192.168.2.30", "192.168.2.69"), ("lime", ["gateway", "vip"], "192.168.2.64", "192.168.2.69"),
+                 ("quince", ["gateway"], "192.168.2.62", ""), ("sorbet", ["vpn-server"], "", ""), ("medlar", ["gateway"], "192.168.2.63", "")]
+        macs = {"papaya": "AA:00:00:00:00:30", "lime": "aa:00:00:00:00:64", "quince": "aa:00:00:00:00:62", "medlar": "nonsense"}
+        got = clientagent.gateways_of(hosts, macs.get)
+        self.assertEqual(got[-1], {"name": "lime or papaya", "ip": "192.168.2.69",
+                                   "macs": ["aa:00:00:00:00:30", "aa:00:00:00:00:64"]})
+        self.assertIn({"name": "quince", "ip": "192.168.2.62", "macs": ["aa:00:00:00:00:62"]}, got)
+        self.assertFalse(any(set(g["name"]) & set("'<>&`") for g in got))      # kiwi-killswitch refuses those
+        self.assertNotIn("medlar", str(got))                               # no MAC known: not trusted
+
+    def test_the_agent_writes_the_kill_switchs_policy_and_leaves_it_the_routing(self):
+        import base64
+        import hashlib
+        import json
+        policy = {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["full", "network"], "default": "network"}
+        body = self.profile.decode().replace("network home", "network home\nkillswitch " +
+                                              base64.b64encode(json.dumps(policy).encode()).decode(), 1).encode()
+        self.w("profile", body.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
+        self.answer("profile " + hashlib.sha256(body).hexdigest())
+        os.makedirs(os.path.join(self.t, "sys"), exist_ok=True)
+        self.w("bin/kiwi-killswitchd", "exit 0\n", 0o755)               # installed: it owns the routing
+        self.run_agent()
+        self.assertEqual(json.loads(self.read("sys/kiwi-killswitch/network.json")), policy)
+        self.assertEqual(oct(os.stat(os.path.join(self.t, "sys", "kiwi-killswitch", "network.json")).st_mode & 0o777), "0o644")
+        self.assertNotIn("ipv4.never-default", self.read("nm"))            # the agent leaves the routing to it
+        self.assertIn("connection up kiwi-home", self.read("nm"))
+        self.assertIn("AllowedIPs = 0.0.0.0/0\n", self.read("imported"))  # the tunnel takes all; its modes pick
+
+    def test_a_note_on_the_way_leaves_the_json_clean(self):
+        import contextlib
+        import io
+        from kiwiserver import util
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            util.note("the control node answers at its address at home (192.168.2.30)")
+        self.assertEqual(out.getvalue(), "")                 # `client list --porcelain` is JSON only
+        self.assertIn("at its address at home", err.getvalue())
+
+    def test_managed_of_reads_the_block(self):
+        self.assertIsNone(clientagent.managed_of({}, "https://id.x"))
+        self.assertEqual(clientagent.managed_of({"kind": "managed"}, "https://id.x"),
+                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"], "apps": [], "lock": True,
+                          "dconf": None})
+        with self.assertRaisesRegex(KiwiError, "not a Flatpak app id"):
+            clientagent.managed_of({"kind": "managed", "apps": ["firefox; rm -rf /"]}, "https://id.x")
+        self.assertEqual(clientagent.managed_of({"kind": "managed", "login_groups": "staff"}, "https://id.x")["login"], ["staff"])
+        with self.assertRaisesRegex(KiwiError, "needs the network's accounts"):
+            clientagent.managed_of({"kind": "managed"}, None)
+        with self.assertRaisesRegex(KiwiError, "not a plain group name"):
+            clientagent.managed_of({"kind": "managed", "admin_groups": ["a b"]}, "https://id.x")
 
     def test_orders_update_and_profile_and_nothing_else(self):
         at = int(time.time())
@@ -409,6 +610,11 @@ class TestClientAgent(unittest.TestCase):
         spent = clientagent.join_command("https://control.papaya.home", "spent", "QUJD")
         r = subprocess.run(["bash", "-c", spent], env=env, capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout, r.stderr.strip()), (1, "", "kiwi-server: used up"))
+
+    def test_the_join_link_carries_the_cas_sum(self):
+        import hashlib
+        link = clientagent.join_link("https://control.papaya.home", "abcdefghijklmnop", CA_TEXT)
+        self.assertEqual(link, "https://control.papaya.home/api/client/join/abcdefghijklmnop#ca=" + hashlib.sha256(CA_TEXT.encode()).hexdigest())
 
     def test_the_fleet_names_its_clients(self):
         self.assertEqual(clientagent.names(FakeFleet({"pentest-1": None, "desk": {"group": "admins"}})),

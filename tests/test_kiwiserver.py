@@ -16255,8 +16255,15 @@ class TestFirstRunPage(StoreBase):
         with self.assertRaises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req)
         e.exception.close()
+        # the short link for Kiwi Agent: the CA from the page, checked against the sum in the link
+        _command, link = self.c.client_invite("pentest-1", both=True)
+        self.assertRegex(link, r"^https://control\.test\.home/api/client/join/[A-Za-z0-9_-]+#ca=[0-9a-f]{64}$")
+        status, ca_text, _ = self.ask("/api/client/ca")
+        self.assertEqual(status, 200)
+        self.assertEqual(hashlib.sha256(ca_text.encode()).hexdigest(), link.split("#ca=")[1])
         status, page, _ = self.ask("/devices/computer-join", {"csrf": csrf, "name": "pentest-1"}, cookie=cookie)
         self.assertIn("pentest-1: run this on it", page)
+        self.assertIn("#ca=", page)                                            # the link, beside the command
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

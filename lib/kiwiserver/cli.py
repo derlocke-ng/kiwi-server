@@ -4350,7 +4350,7 @@ def cmd_serve(args):
 
 
 ACCOUNT_PAGE_OPS = ("invite", "invites", "revoke", "requests", "accept", "deny")
-ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber", "member", "members")
+ACCOUNT_OPS = ("create", "link", "list", "delete", "jabber", "desktop", "member", "members")
 # the services that can sign people in with the network's accounts, and where Forgejo & co. come back to
 CONNECTABLE = {"git": ("Forgejo", lambda s, h: s.get("git_hostname") or "git." + h.hostname, "/user/oauth2/accounts/callback"),
                "cloud": ("Nextcloud", lambda s, h: s.get("nc_hostname") or "cloud." + h.hostname, "/apps/user_oidc/code"),
@@ -4456,7 +4456,7 @@ def cmd_accounts(args):
             prefix, " ".join(shlex.quote(x) for x in [what] + rest[:1] + extra))
     elif what in ACCOUNT_OPS:
         name = {"create": "create", "link": "reset", "list": "list", "delete": "delete", "jabber": "jabber",
-                "member": "member", "members": "members"}[what]
+                "desktop": "desktop", "member": "member", "members": "members"}[what]
         cmd = ("S=$(ls /home/*/docker/kiwi/accounts.sh /var/home/*/docker/kiwi/accounts.sh 2>/dev/null | head -1); "
                "sudo sh \"$S\" %s" % " ".join(shlex.quote(x) for x in [name] + rest[:3]))
     else:
@@ -4916,8 +4916,9 @@ def cmd_client(args):
             raise KiwiError("%s is a machine of the fleet" % name)
         before = util.read_text(path)
         raw = yaml.safe_load(before) or {}
-        text = fleettext.put(before, ["clients", name], {}) if isinstance(raw.get("clients"), dict) else \
-            fleettext.put(before, ["clients"], {name: {}})
+        block = {"kind": "managed"} if args.managed else {}
+        text = fleettext.put(before, ["clients", name], block) if isinstance(raw.get("clients"), dict) else \
+            fleettext.put(before, ["clients"], {name: block})
         if text is None:
             raise KiwiError("the fleet file could not be changed in place: add `clients: {%s: {}}` at its top level" % name)
         util.write_text(path, text, 0o600)
@@ -4933,11 +4934,46 @@ def cmd_client(args):
         return
     if name not in have:
         raise KiwiError("no client called %s (kiwi-server client list %s)" % (name, typed_path(args.fleet)))
+    if args.action == "iso":            # install media: Silverblue, Bluefin or Bluefin-DX, joining at its first start
+        from . import clientiso
+        import base64
+        import tempfile
+        if not args.base:
+            raise KiwiError("--base FEDORA_INSTALLER_ISO: the installer the media is made from (Fedora Silverblue's, or "
+                            "Fedora Everything's network install, from fedoraproject.org)")
+        if not controlsync.remote_of(fleet.dir):
+            raise KiwiError("the join code comes from the control node: join it first (kiwi-server control join %s LINK)"
+                            % typed_path(args.fleet))
+        img = clientiso.image(args.system or "bluefin", args.container)
+        secret = None
+        if args.passphrase_file:            # on the stick: test machines only
+            secret = util.read_text(args.passphrase_file).strip("\n")
+            util.warn("the disk's passphrase is on the stick (--passphrase-file): for a test machine, not a person's")
+        days = max(1, min(int(args.days or 14), 14))
+        command = controlsync.client_invite_api(fleet.dir, name, hours=days * 24)
+        m = re.search(r"echo\s+([A-Za-z0-9+/=]+)\s*\|\s*base64 -d.*?(https://[^\s);\"']+/api/client/join/[A-Za-z0-9_-]{16,64})", command)
+        if not m:
+            raise KiwiError("the control node's join command is not of a kind this kiwi-server reads")
+        ks = clientiso.kickstart(name, img, m.group(2), base64.b64decode(m.group(1)).decode(),
+                                 keymap=args.keymap or "us", timezone=args.timezone or "UTC", passphrase=secret,
+                                 managed=(have.get(name) or {}).get("kind") == "managed",
+                                 admin_key=util.read_text(args.admin_key) if args.admin_key else None)
+        out = args.output or "%s-%s.iso" % (name, args.system or "bluefin")
+        work = tempfile.mkdtemp(prefix="kiwi-client-iso-", dir=os.environ.get("XDG_RUNTIME_DIR") or None)
+        try:
+            clientiso.build(make_tc(args), os.path.abspath(args.base), os.path.abspath(out), ks, work)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        util.say("%s: install media for %s (%s); a USB stick from it with any image writer. It installs from the "
+                 "Internet, wipes every disk of the computer, %s, and joins the network at its first start: within "
+                 "%d days, once" % (out, name, img, "takes the disk's passphrase from the stick" if secret is not None
+                                    else "asks for the disk's passphrase", days))
+        return
     if args.action == "invite":         # the one-time command for a computer without kiwi-server, from the control node
         if not controlsync.remote_of(fleet.dir):
             raise KiwiError("the command comes from the control node: join it first (kiwi-server control join %s LINK)"
                             % typed_path(args.fleet))
-        print(controlsync.client_invite_api(fleet.dir, name))
+        print(controlsync.client_invite_api(fleet.dir, name, link=args.link))
         # not on stdout: that is the command alone, as `$(kiwi-server client invite …)` takes it
         print(":: run that on %s, once, within a day: it puts the agent on it (sudo asks there for its password)" % name,
               file=sys.stderr)
@@ -7180,7 +7216,7 @@ USAGE = """kiwi-server — scripts, configs and unattended ISOs for Kiwi Network
                                                 this computer on the network: VPN connection, names, certificates
   kiwi-server enroll <fleet> <host|name> [--group G] [--split] [--qr]
                                                 a WireGuard client on the master's wg-easy; a node's config goes to secrets/
-  kiwi-server client add|invite|install|list|remove <fleet> [name] [--vpn] [--here|--ssh U@A]
+  kiwi-server client add|invite|install|iso|list|remove <fleet> [name] [--vpn] [--here|--ssh U@A]
                                                 a person's computer as a client: its agent reports to the control node
   kiwi-server logins <fleet> [host...]          the services to sign in to: address, user name and password
   kiwi-server ssh-config <fleet> [--write]      ssh's own configuration for the machines: `ssh papaya` with the fleet's key
@@ -7373,13 +7409,27 @@ def build_parser():
                    help="with --ssh: the machine was installed anew, forget the SSH host key it showed before")
     s.add_argument("--update", action="store_true", help="afterwards, restart the containers a newer image came for (kiwi-stack update)")
     s = sub("client", cmd_client)
-    s.add_argument("action", choices=["add", "invite", "install", "list", "remove", "policy"])
+    s.add_argument("action", choices=["add", "invite", "install", "iso", "list", "remove", "policy"])
     s.add_argument("fleet")
     s.add_argument("name", nargs="?", help="the client: a person's computer (lowercase letters, digits, dashes)")
     s.add_argument("--here", action="store_true", help="install: on this computer (sudo asks for its password)")
     s.add_argument("--vpn", action="store_true", help="add: a place on the VPN too; its profile sets the connection up")
     s.add_argument("--full", action="store_true", help="add --vpn: everything through the VPN, not only the network")
+    s.add_argument("--managed", action="store_true", help="add: a company's computer: its people log in with the network's "
+                                                         "accounts, without admin rights (docs/design/clients.md)")
     s.add_argument("--group", help="add --vpn: the VPN group, which decides what it may reach (a pentest system: one of its own)")
+    s.add_argument("--system", choices=["silverblue", "bluefin", "bluefin-dx", "phoenix", "phoenix-dx"],
+                   help="iso: what is installed (bluefin; phoenix: Bluefin with clevis, its disk opens by the rings)")
+    s.add_argument("--container", metavar="IMAGE", help="iso: another bootc image to install, like ghcr.io/ublue-os/aurora:stable")
+    s.add_argument("--base", metavar="ISO", help="iso: the Fedora installer it is made from")
+    s.add_argument("--output", metavar="ISO", help="iso: where it goes (NAME-SYSTEM.iso)")
+    s.add_argument("--days", type=int, help="iso: how long its join code works (14, at most 14)")
+    s.add_argument("--keymap", help="iso: the keyboard at the install and at the disk's prompt (us)")
+    s.add_argument("--timezone", help="iso: the computer's time zone (UTC)")
+    s.add_argument("--passphrase-file", metavar="FILE", help="iso: the disk's passphrase on the stick, for test machines only")
+    s.add_argument("--link", action="store_true", help="invite: the short link for Kiwi Agent, not the shell command")
+    s.add_argument("--admin-key", metavar="FILE", help="iso: an SSH public key: a local admin `kiwi` who logs in by it only "
+                                                       "(the IT department's way in), and sshd on")
     s.add_argument("--ssh", metavar="USER@ADDR", help="install, remove: on another computer, over SSH")
     s = sub("qr", cmd_qr); s.add_argument("file")
     s.add_argument("--png", action="store_true", help="a PNG image on standard output")

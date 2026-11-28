@@ -421,11 +421,12 @@ the box: the same SSD booted on two machines is one client on two boxes. The
 
 **Add one on the control page:** Devices, *Add a computer*. Give it a name, and leave *A place on
 the VPN* ticked for a computer that goes out of the house. A pentest system belongs in a VPN
-group of its own, which reaches the Internet and nothing at home. The page shows one command.
-Run it in a terminal on that computer, at home or on the VPN. It asks for the computer's password
-(`sudo`) and puts the agent on it. The command works once, within a day, and carries the
-network's CA, so the computer checks that it talks to your control node. kiwi-server need not be
-on the computer.
+group of its own, which reaches the Internet and nothing at home. The page shows a short link:
+paste it into *Kiwi Agent* on the computer (`kiwi install kiwi-agent`, *Join a Network…*). The app
+fetches the network's CA from the control page, checks it against the SHA-256 in the link, and
+only then fetches the agent with it; polkit asks for the computer's password. Beside the link the
+page shows a command that does the same in a terminal, without the app. Both work once, within a
+day. kiwi-server need not be on the computer.
 
 **Or from this computer:**
 
@@ -436,7 +437,7 @@ kiwi-server client install fleet.yaml desk --here
 ```
 
 `--vpn` gives it its place on the VPN (`--group` its group; `--full` sends everything through the
-VPN, not only the network). `install --here` puts the agent on this computer (`sudo` asks for
+VPN, not only the network). `client invite --link` prints the short link instead of the command. `install --here` puts the agent on this computer (`sudo` asks for
 your password); `--ssh USER@ADDRESS` puts it on another one. `client invite fleet.yaml NAME` prints
 the one-time command, as the page shows it. `client list` shows the clients with their last
 report. `client remove` takes a client out of the fleet file and off the VPN.
@@ -444,8 +445,9 @@ report. `client remove` takes a client out of the fleet file and off the VPN.
 **A computer leaves:** `sudo kiwi-client-agent leave` on it takes away what the agent put there:
 its VPN connection, the network's CA, its disk's binding to the rings, and the agent itself.
 
-**The app on the computer:** *Kiwi Network* (`kiwi-desktop`, installed with kiwi-server's app)
-shows what the agent says: whether the network hears from the computer, its VPN connection (with
+**The app on the computer:** *Kiwi Agent* ([kiwi-agent](https://github.com/derlocke-ng/kiwi-agent),
+installed with kiwi-updater: `kiwi add https://github.com/derlocke-ng/kiwi-agent.git`, then
+`kiwi install kiwi-agent`) shows what the agent says: whether the network hears from the computer, its VPN connection (with
 a switch), its disk, its updates. Its buttons do what the commands above do, as root through
 polkit: *Join a network…* (paste the command from the page), *Bind…* (the disk's passphrase),
 *Update now*, *Leave…*. The agent writes what the app shows into `/run/kiwi-client/status`,
@@ -455,6 +457,60 @@ The agent keeps itself current: when the control node has a newer one, it says s
 computer's profile, and the agent fetches it, checks its signature and installs it. An agent of
 2.330 cannot do that yet: run its computer's *Join command* (Devices) once more.
 
+**A managed computer** (a company's): `client add NAME --managed` (or `kind: managed` in its
+block). Its people log in with their accounts of the network (the accounts module, Kanidm), and
+have no admin rights there; the network's admins get sudo. On the Accounts page, *Let log in* in
+the *Computers* column says who may log in there (the Kanidm group `computers`; `login_groups` in
+the block names others), and *Make admin* gives sudo (`admin_groups`). The agent sets the computer
+up from its profile: Kanidm's own client (`kanidm-unixd`, layered on Bluefin and Silverblue, which
+counts from the next start: the agent restarts the computer then, only while nobody is logged
+in), Kanidm's authselect profile, and the sudo rule. A login is kept for when the computer is away
+from the network. Install media for a managed computer create no local user. For Fedora-based
+systems.
+
+Its software: `apps` in its block lists the Flatpaks it has for everyone (from Flathub, like
+`[org.mozilla.firefox, org.libreoffice.LibreOffice]`), and only the network's admins install or
+remove software for the whole computer (`lock_software`, on unless set to `false`; a polkit
+rule). A person can still install a Flatpak into their own home folder; locking that too comes
+next.
+
+Its desktop: `desktop_settings` sets GNOME's settings for everyone (dconf paths with their keys and
+values as dconf writes them), and `desktop_locks` names the ones its people may not change:
+
+```yaml
+clients:
+  office-1:
+    kind: managed
+    apps: [org.mozilla.firefox, org.libreoffice.LibreOffice]
+    desktop_settings:
+      org/gnome/desktop/screensaver: {lock-enabled: true, lock-delay: "uint32 0"}
+    desktop_locks: [/org/gnome/desktop/screensaver/lock-enabled]
+```
+
+**A new computer from a stick:** `kiwi-server client iso` makes install media that installs
+Silverblue, Bluefin, Bluefin-DX or Phoenix Desktop (`phoenix`, `phoenix-dx`: Bluefin with clevis in its
+boot system, [phoenix-desktop](https://github.com/derlocke-ng/phoenix-desktop)) and joins the network at
+the computer's first start:
+
+```bash
+kiwi-server client add fleet.yaml laptop-anna --vpn
+kiwi-server control push fleet.yaml
+kiwi-server client iso fleet.yaml laptop-anna --system bluefin --base Fedora-Silverblue-45.iso
+```
+
+`--base` is Fedora's installer (Silverblue's ISO, or Everything's network install, from
+fedoraproject.org). The stick installs the image straight from its registry, so the computer needs
+the Internet during the install. It wipes every disk of the computer and encrypts the new one; the
+installer asks for the disk's passphrase. When it is done the computer switches off: take the stick
+out, then switch it on (left in, the stick would install again). GNOME asks for its person at the
+first start.
+Universal Blue's images (Bluefin) are switched to their signed origin after the install, so their
+updates are checked against the signature. The stick carries a one-time join code that works for
+14 days (`--days`), once: whoever has the stick within that time can join as that computer.
+`--keymap` sets the keyboard of the install and of the disk's prompt; `--container` installs
+another bootc image (`ghcr.io/ublue-os/aurora:stable`). `--passphrase-file` puts the disk's
+passphrase on the stick: for test machines only.
+
 **What the agent does:**
 
 - It reports which box it runs on (a sum of the board's id, salted for this network), its
@@ -463,17 +519,27 @@ computer's profile, and the agent fetches it, checks its signature and installs 
   network whose hardware a computer runs on.
 - It applies its profile when the network changes it: the network's CA in the system's trust
   store, and its VPN as a NetworkManager connection named after the network (`kiwi-home` for
-  `home`) that comes up by itself. Only the
-  network goes through it, and only the network's names are asked there, unless the computer
-  was added with everything through the VPN.
+  `home`) that comes up by itself. Only the network goes through it, unless the computer was
+  added with everything through the VPN; every name is asked at the network's DNS, so its
+  blocklist works on the computer wherever it is.
+- With [kiwi-killswitch](https://github.com/derlocke-ng/kiwi-killswitch) on the computer (0.3.0
+  or later, `kiwi install kiwi-killswitch`), the kill switch decides what goes through the VPN:
+  `full` (everything; the Internet only through the VPN, or through one of the network's
+  gateways when the computer is on its LAN), `network` (only the network; the Internet the
+  computer's own way), or `off`. In both `full` and `network` every name is asked at the
+  network's DNS, with its blocklist; `off` is the computer as it was. The agent writes
+  `/etc/kiwi-killswitch/network.json` from the profile. In the client's block,
+  `killswitch_modes` says which modes its person may pick and `killswitch_mode` the one it starts
+  in (`full` for a client added with `--full`, else `network`). A managed computer has `full`, and
+  its people cannot switch it off.
 - It takes two orders: *Update now* (rpm-ostree or apt) and *Apply its profile*, buttons on the
   Devices page, or `kiwi-server control order fleet.yaml NAME update`. Nothing else, never a
   command.
 
 **Its disk:** a client with `unlock:` (`rings`, `threshold`, `switch`, as a machine's) gets the
 rings' policy in its profile. Binding the disk needs its passphrase once: `sudo kiwi-client-agent
-bind` at the computer installs clevis and its boot-system part, gives the boot system the network,
-and asks for the passphrase. From then on the agent keeps the binding as the network says (other
+bind` at the computer installs clevis and its boot-system part (Phoenix Desktop has them already),
+gives the boot system the network, and asks for the passphrase. From then on the agent keeps the binding as the network says (other
 rings, new keys) without the passphrase, and unbinds it when `unlock:` goes. The passphrase
 always opens the disk too. Switching a computer's auto-unlock on the page, as a machine's: not built yet.
 

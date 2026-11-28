@@ -23,7 +23,7 @@ NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FRESH = 150         # seconds a report counts as how the computer is now
 SKEW = 300
 LIMIT = 64 * 1024
-VERSION = 4
+VERSION = 6
 ORDERS = ("update", "profile")     # what a client's agent takes; nothing else, never a command
 
 FACTS = r'''
@@ -51,6 +51,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     echo "updates $(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ')"
 fi
 [ -s /var/lib/kiwi-client/profile.sum ] && echo "profile $(cut -c1-12 /var/lib/kiwi-client/profile.sum)"
+[ -s /var/lib/kiwi-client/kind ] && echo "kind $(cat /var/lib/kiwi-client/kind)"
 if [ -s /var/lib/kiwi-client/unlock.json ]; then [ -s /var/lib/kiwi-client/unlock.slot ] && echo "unlock bound" || echo "unlock waits"; fi
 echo "agent %(version)s"
 '''
@@ -74,7 +75,13 @@ if [ "${1:-}" = bind ]; then
     [ "$(id -u)" = 0 ] || { echo "as root: sudo $0 bind" >&2; exit 2; }
     [ -s "$st/unlock.json" ] || { echo "this computer's profile has no disk policy: the network's settings give it one (unlock: rings: under its name in clients:); then wait a minute and run this again" >&2; exit 2; }
     dev=$(luks); [ -n "$dev" ] || { echo "no encrypted disk here: nothing to bind" >&2; exit 2; }
-    if command -v rpm-ostree >/dev/null 2>&1; then
+    if command -v rpm-ostree >/dev/null 2>&1 && command -v clevis >/dev/null 2>&1 \
+        && { lsinitrd -m 2>/dev/null; lsinitrd -m "/usr/lib/modules/$(uname -r)/initramfs.img" 2>/dev/null; } | grep -qx clevis; then
+        # an image with clevis in its boot system (phoenix-desktop): nothing to layer, no local boot system
+        echo "clevis is in the system image and its boot system already"
+        grep -qw rd.neednet=1 /proc/cmdline || { rpm-ostree kargs --append-if-missing=rd.neednet=1 --append-if-missing=ip=dhcp >/dev/null || exit 1
+            echo "the network at boot counts from the next start"; }
+    elif command -v rpm-ostree >/dev/null 2>&1; then
         echo "clevis into the system image and its boot system, and the network at boot (rpm-ostree)"
         rpm-ostree install -y --idempotent clevis clevis-luks clevis-dracut >/dev/null || exit 1
         rpm-ostree initramfs --enable --arg=-a --arg=clevis --arg=-a --arg=clevis-pin-tang --arg=-a --arg=clevis-pin-sss >/dev/null || exit 1
@@ -168,8 +175,129 @@ unlocked() {    # POLICY or nothing: a disk a person bound (bind) kept bound to 
     fi
     key=
 }
+toml_list() { printf '%%s' "$1" | tr ',' '\n' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g; s/^/[/; s/$/]/'; }
+managed() {     # PROFILE: a managed computer: its people log in with the network's accounts (Kanidm's
+    # kanidm-unixd, kept for when it is away), and the network's admins get sudo here
+    local p=$1 idm login admins conf unixd sudo_rules want prof
+    idm=$(sed -n 's/^accounts //p' "$p"); [ -n "$idm" ] || return 0
+    login=$(sed -n 's/^login_groups //p' "$p"); admins=$(sed -n 's/^admin_groups //p' "$p")
+    if ! command -v kanidm_unixd >/dev/null 2>&1 && [ ! -x /usr/sbin/kanidm_unixd ]; then
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            if ! rpm-ostree status 2>/dev/null | grep -q kanidm-unixd-clients; then
+                rpm-ostree install -y --idempotent kanidm-unixd-clients >/dev/null 2>"$err" \
+                    || { say "kanidm-unixd could not be layered: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+            fi
+            # it comes with the next start: now, while nobody is logged in; else at the next restart
+            if loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qv '^gdm\|^$'; then
+                say "kanidm-unixd is layered: logins with the network's accounts from the next start"
+            else
+                say "kanidm-unixd is layered: restarting now, nobody is logged in"; systemctl reboot
+            fi
+            return 0
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q kanidm-unixd-clients >/dev/null 2>"$err" || { say "kanidm-unixd did not install: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+        else
+            say "logins with the network's accounts are for Fedora-based computers (kanidm-unixd): not on this one"; return 0
+        fi
+    fi
+    mkdir -p /etc/kanidm
+    [ -f /etc/kanidm/ca.pem ] && cmp -s "$d/ca.pem" /etc/kanidm/ca.pem || install -m 0644 "$d/ca.pem" /etc/kanidm/ca.pem
+    conf=$(printf 'uri = "%%s"\nca_path = "/etc/kanidm/ca.pem"' "$idm")
+    unixd=$(printf "version = '2'\ndefault_shell = \"/bin/bash\"\nhome_alias = \"name\"\nuid_attr_map = \"name\"\ngid_attr_map = \"name\"\n\n[kanidm]\npam_allowed_login_groups = %%s" "$(toml_list "${login:-computers}")")
+    changed=
+    [ "$(cat /etc/kanidm/config 2>/dev/null)" = "$conf" ] || { printf '%%s\n' "$conf" > /etc/kanidm/config; changed=1; }
+    [ "$(cat /etc/kanidm/unixd 2>/dev/null)" = "$unixd" ] || { printf '%%s\n' "$unixd" > /etc/kanidm/unixd; changed=1; }
+    # PAM and nsswitch through Kanidm: authselect's own way, a profile of the sssd one (Kanidm's book)
+    if [ "$(authselect current --raw 2>/dev/null | cut -d' ' -f1)" != custom/kanidm ]; then
+        prof=/etc/authselect/custom/kanidm
+        [ -d "$prof" ] || authselect create-profile kanidm -b sssd >/dev/null 2>&1 || { say "authselect could not make its profile"; return 1; }
+        for f in system-auth password-auth; do
+            sed -i -e 's/^auth\([[:space:]]\+\)sufficient\([[:space:]]\+\)pam_sss\.so.*/auth        sufficient                                   pam_kanidm.so ignore_unknown_user/' \
+                   -e 's/^account\([[:space:]]\+\).*pam_sss\.so.*/account     sufficient                                   pam_kanidm.so ignore_unknown_user/' \
+                   -e '/^password.*pam_sss\.so/d' -e '/pam_sss_gss\.so/d' \
+                   -e 's/^session\([[:space:]]\+\)optional\([[:space:]]\+\)pam_sss\.so.*/session     optional                                     pam_kanidm.so/' "$prof/$f"
+        done
+        sed -i -e '/^\(passwd\|group\):/ s/\bsss\b/kanidm/' -e '/^\(passwd\|group\):/! s/ sss\b//' "$prof/nsswitch.conf"
+        authselect select custom/kanidm --force >/dev/null 2>"$err" || { say "authselect: $(tail -n 1 "$err" | cut -c1-160)"; return 1; }
+        changed=1
+    fi
+    systemctl enable -q --now kanidm-unixd.service kanidm-unixd-tasks.service 2>/dev/null
+    [ -n "$changed" ] && systemctl restart kanidm-unixd.service kanidm-unixd-tasks.service 2>/dev/null
+    # sudo for the network's admins, here: their groups as Kanidm names them
+    sudo_rules=$(printf '%%s' "${admins:-admins}" | tr ',' '\n' | grep -v '^$' | sed 's/.*/%%& ALL=(ALL) ALL/')
+    want="# kiwi-server: the network's admins on this computer (its profile)
+$sudo_rules"
+    if [ "$(cat /etc/sudoers.d/kiwi-network 2>/dev/null)" != "$want" ]; then
+        printf '%%s\n' "$want" > /etc/sudoers.d/kiwi-network.new && chmod 0440 /etc/sudoers.d/kiwi-network.new
+        if visudo -cf /etc/sudoers.d/kiwi-network.new >/dev/null 2>&1; then mv -f /etc/sudoers.d/kiwi-network.new /etc/sudoers.d/kiwi-network
+        else rm -f /etc/sudoers.d/kiwi-network.new; say "the sudo rule for the network's admins did not pass visudo: left out"; fi
+    fi
+    [ -n "$changed" ] && say "logins with the network's accounts ($idm; groups: ${login:-computers}; sudo: ${admins:-admins})"
+    return 0
+}
+software() {    # PROFILE: a managed computer's software: the Flatpaks it has, and who may install
+    local p=$1 apps lock admins rules want a g
+    apps=$(sed -n 's/^apps //p' "$p"); lock=$(sed -n 's/^lock_software //p' "$p"); admins=$(sed -n 's/^admin_groups //p' "$p")
+    if [ -n "$apps" ] && command -v flatpak >/dev/null 2>&1; then
+        flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
+        for a in $(printf '%%s' "$apps" | tr ',' ' '); do
+            flatpak info --system "$a" >/dev/null 2>&1 && continue
+            if flatpak install --system -y --noninteractive flathub "$a" >/dev/null 2>"$err"; then say "$a is on it now (Flathub, for everyone)"
+            else say "$a did not install: $(tail -n 1 "$err" | cut -c1-120)"; fi
+        done
+    fi
+    rules=/etc/polkit-1/rules.d/49-kiwi-managed.rules
+    if [ "$lock" = yes ]; then
+        # only the network's admins (and wheel) install or remove software for the whole computer
+        g=$(printf '%%s' "wheel,${admins:-admins}" | tr ',' '\n' | grep -v '^$' | sed 's/.*/subject.isInGroup("&")/' | paste -sd'|' - | sed 's/|/ || /g')
+        want="// kiwi-server: on this managed computer only the network's admins install or remove software (its profile)
+polkit.addRule(function(action, subject) {
+    var software = action.id.indexOf(\"org.freedesktop.Flatpak.\") == 0 ||
+                   action.id.indexOf(\"org.projectatomic.rpmostree1.\") == 0 ||
+                   action.id.indexOf(\"org.freedesktop.packagekit.\") == 0;
+    if (software && !($g)) {
+        return polkit.Result.NO;
+    }
+});"
+        if [ "$(cat "$rules" 2>/dev/null)" != "$want" ]; then
+            printf '%%s\n' "$want" > "$rules" && chmod 0644 "$rules" && say "only the network's admins install software here now"
+        fi
+    elif [ -f "$rules" ]; then
+        rm -f "$rules"; say "installing software is as the system has it again"
+    fi
+}
+desktop() {     # PROFILE: a managed computer's GNOME settings, and the ones its people may not change
+    local p=$1 keys locks changed=
+    keys=$(sed -n 's/^dconf //p' "$p" | base64 -d 2>/dev/null); locks=$(sed -n 's/^dconf_locks //p' "$p" | base64 -d 2>/dev/null)
+    command -v dconf >/dev/null 2>&1 || return 0
+    if [ -z "$keys$locks" ]; then
+        if [ -f /etc/dconf/db/local.d/50-kiwi ] || [ -f /etc/dconf/db/local.d/locks/50-kiwi ]; then
+            rm -f /etc/dconf/db/local.d/50-kiwi /etc/dconf/db/local.d/locks/50-kiwi; dconf update; say "its desktop settings are its people's again"
+        fi
+        return 0
+    fi
+    mkdir -p /etc/dconf/profile /etc/dconf/db/local.d/locks
+    # the system database `local` read under each person's own (Fedora has none by default)
+    grep -q '^system-db:local' /etc/dconf/profile/user 2>/dev/null || { printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user; changed=1; }
+    [ "$(cat /etc/dconf/db/local.d/50-kiwi 2>/dev/null)" = "$keys" ] || { printf '%%s\n' "$keys" > /etc/dconf/db/local.d/50-kiwi; changed=1; }
+    [ "$(cat /etc/dconf/db/local.d/locks/50-kiwi 2>/dev/null)" = "$locks" ] || { printf '%%s\n' "$locks" > /etc/dconf/db/local.d/locks/50-kiwi; changed=1; }
+    if [ -n "$changed" ]; then dconf update && say "its desktop settings are the network's now (dconf, locked: $(printf '%%s' "$locks" | grep -c .))"; fi
+}
+killswitch() {  # POLICY: kiwi-killswitch's network file (the modes, the network's gateways); it enforces it
+    local want=$1
+    if [ -z "$want" ]; then
+        if [ -f "$st/killswitch.sum" ]; then rm -f /etc/kiwi-killswitch/network.json "$st/killswitch.sum"; say "the kill switch's network policy is gone"; fi
+        return 0
+    fi
+    [ "$(printf '%%s' "$want" | sha256sum | cut -d' ' -f1)" = "$(cat "$st/killswitch.sum" 2>/dev/null)" ] && [ -s /etc/kiwi-killswitch/network.json ] && return 0
+    mkdir -p -m 0755 /etc/kiwi-killswitch
+    printf '%%s\n' "$want" > /etc/kiwi-killswitch/network.json.new && chmod 0644 /etc/kiwi-killswitch/network.json.new \
+        && mv -f /etc/kiwi-killswitch/network.json.new /etc/kiwi-killswitch/network.json
+    printf '%%s' "$want" | sha256sum | cut -d' ' -f1 > "$st/killswitch.sum"
+    say "the kill switch's network policy is in place$([ -x /usr/local/sbin/kiwi-killswitchd ] || echo ' (kiwi-killswitch is not installed: kiwi install kiwi-killswitch)')"
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
-    local p=$1 ca f upd vpn con mode search tmp
+    local p=$1 ca f upd vpn con mode search tmp ks nd
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
     if [ -n "$ca" ]; then
         if [ -d /etc/pki/ca-trust/source/anchors ]; then f=/etc/pki/ca-trust/source/anchors/kiwi-$NETWORK.pem; upd=update-ca-trust
@@ -180,6 +308,9 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         fi
     fi
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
+    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then echo managed > "$st/kind"; managed "$p"; software "$p"; desktop "$p"
+    else rm -f "$st/kind"; fi
+    killswitch "$(sed -n 's/^killswitch //p' "$p" | base64 -d 2>/dev/null)"
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -187,21 +318,27 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     fi
     command -v nmcli >/dev/null 2>&1 || { say "no NetworkManager here: the profile's VPN is not set up"; return 1; }
     mode=$(sed -n 's/^vpn_mode //p' "$p"); search=$(sed -n 's/^search //p' "$p")
-    if [ "$(printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1)" != "$(cat "$st/vpn.sum" 2>/dev/null)" ] || ! nmcli -t -f NAME connection show | grep -qx "$con"; then
+    # with kiwi-killswitch and the network's policy, the tunnel takes everything and the kill switch
+    # decides what goes into it (its modes): a config for the network only would leave its `vpn` mode no way out
+    ks=; [ -x /usr/local/sbin/kiwi-killswitchd ] && [ -s /etc/kiwi-killswitch/network.json ] && ks=all
+    if [ "$(printf '%%s%%s' "$vpn" "$ks" | sha256sum | cut -d' ' -f1)" != "$(cat "$st/vpn.sum" 2>/dev/null)" ] || ! nmcli -t -f NAME connection show | grep -qx "$con"; then
         tmp=$(mktemp -d /run/kiwi-client.XXXXXX) || return 1       # nmcli names the connection after the file; in memory only
         printf '%%s' "$vpn" | base64 -d > "$tmp/$con.conf" && chmod 0600 "$tmp/$con.conf"
+        [ -n "$ks" ] && sed -i 's|^[[:space:]]*AllowedIPs[[:space:]]*=.*|AllowedIPs = 0.0.0.0/0|' "$tmp/$con.conf"
         nmcli connection delete "$con" >/dev/null 2>&1
         if ! nmcli connection import type wireguard file "$tmp/$con.conf" >/dev/null 2>"$err"; then
             say "its VPN connection could not be made: $(tr '\n' ' ' < "$err" | cut -c1-160)"; rm -rf "$tmp"; return 1
         fi
         rm -rf "$tmp"
-        printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
+        printf '%%s%%s' "$vpn" "$ks" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
         say "its VPN connection $con is made"
     fi
-    if [ "$mode" = full ]; then     # everything through the VPN, every name asked there
-        nmcli connection modify "$con" ipv4.never-default no ipv4.dns-search "~." ipv6.method disabled connection.autoconnect yes
-    else                            # only the network: its names to its DNS, the Internet as it was
-        nmcli connection modify "$con" ipv4.never-default yes ipv4.dns-search "$search" ipv6.method disabled connection.autoconnect yes
+    if [ -n "$ks" ]; then
+        :   # kiwi-killswitch owns the connection's routing: the mode its person or the network chose
+    else    # every name at the network's DNS (its blocklist), and only there (-50); `full` sends everything through
+        [ "$mode" = full ] && nd=no || nd=yes   # the VPN, else only the network goes there, the Internet as it was
+        nmcli connection modify "$con" ipv4.never-default $nd ipv4.dns-search "~.,$search" ipv4.dns-priority -50 \
+            ipv6.method disabled connection.autoconnect yes
     fi
     nmcli connection up "$con" >/dev/null 2>&1 || say "its VPN connection $con did not come up now: NetworkManager tries again"
     return 0
@@ -413,7 +550,7 @@ def parse(text):
             out["vpn"].append({"link": link[:32], "address": addr[:64]})
         elif k in ("uptime", "crypt", "clevis") and v.isdigit():
             out[k] = int(v)
-        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile", "unlock"):
+        elif k in ("box", "os", "os_id", "kernel", "hostname", "route", "updates", "agent", "profile", "unlock", "kind"):
             out[k] = v[:200]
     return out
 
@@ -487,11 +624,136 @@ def vpn_conf_path(fleet, name):
     return fleet.resolve_path("secrets/devices/%s.conf" % name)
 
 
-def profile(fleet, name, linked=(), unlock=None):
+def managed_of(block, accounts_url):
+    """A managed computer's part of its profile: where its people's accounts are, who may log in,
+    who gets sudo. None for a personal one, or without the network's accounts."""
+    if str((block or {}).get("kind") or "personal") != "managed":
+        return None
+    if not accounts_url:
+        raise KiwiError("a managed computer needs the network's accounts (the accounts module) for its logins")
+
+    def groups(key, default):
+        got = block.get(key) or [default]
+        got = [got] if isinstance(got, str) else got
+        for g in got:
+            if not NAME.match(str(g)):
+                raise KiwiError("%s: %r is not a plain group name" % (key, g))
+        return [str(g) for g in got]
+    apps = block.get("apps") or []
+    apps = [apps] if isinstance(apps, str) else apps
+    for a in apps:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}", str(a)):
+            raise KiwiError("apps: %r is not a Flatpak app id (like org.mozilla.firefox)" % a)
+    return {"accounts": accounts_url, "login": groups("login_groups", "computers"), "admins": groups("admin_groups", "admins"),
+            "apps": [str(a) for a in apps], "lock": block.get("lock_software", True) is not False,
+            "dconf": dconf_files(block)}
+
+
+# kiwi-killswitch's modes with the network's file (docs/design/clients.md): `full` everything through
+# the VPN; `network` only the network, the Internet the computer's own way; every name at the network's
+# DNS (its blocklist) in both; `off` none of it
+MODES = ("full", "network", "off")
+MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+def killswitch_policy(network, conn, block, conf_text, gateways, domains):
+    """kiwi-killswitch's /etc/kiwi-killswitch/network.json for a client with a place on the VPN: the
+    modes it may use and its default (`killswitch_modes`, `killswitch_mode` in its block; a managed
+    one is fixed to `full`), the network's gateways that stand in for the VPN on their LAN
+    ([{name, ip, macs}]), its resolvers and VPN subnets as its VPN config names them. None without
+    a VPN config."""
+    import ipaddress
+    if not conf_text:
+        return None
+    block = block or {}
+    managed = str(block.get("kind") or "") == "managed"
+    modes = block.get("killswitch_modes") or (["full"] if managed else list(MODES))
+    modes = [modes] if isinstance(modes, str) else [str(m) for m in modes]
+    if not modes or any(m not in MODES for m in modes):
+        raise KiwiError("killswitch_modes: some of %s" % ", ".join(MODES))
+    modes = [m for m in MODES if m in modes]
+    full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in conf_text.splitlines())
+    start = "full" if managed or full else "network"        # a client added with --full starts with everything
+    default = str(block.get("killswitch_mode") or (start if start in modes else modes[0]))
+    if default not in modes:
+        raise KiwiError("killswitch_mode %s is not one of killswitch_modes (%s)" % (default, ", ".join(modes)))
+    dns, mesh, address = [], [], None
+    for line in conf_text.splitlines():
+        key, _eq, value = line.partition("=")
+        key, value = key.strip().lower(), value.strip()
+        if key == "dns":
+            dns += [v.strip() for v in value.split(",") if v.strip()]
+        elif key == "allowedips":
+            mesh += [v.strip() for v in value.split(",") if v.strip() and not v.strip().endswith("/0")]
+        elif key == "address" and not address:
+            address = value.split(",")[0].strip()
+    if not mesh and address:        # a config for everything names no subnet: the one of its own address
+        mesh = [str(ipaddress.ip_interface(address).network.supernet(new_prefix=16))]
+    mesh = [str(ipaddress.ip_network(m, strict=False)) for m in mesh if ":" not in m]
+    dns = [str(ipaddress.ip_address(d)) for d in dns if ":" not in d]
+    return {"version": 1, "network": network, "vpn": conn, "modes": modes, "default": default, "locked": managed,
+            "gateways": [g for g in gateways if g.get("macs")], "dns": dns, "mesh": mesh, "domains": list(domains)}
+
+
+def gateways_of(hosts, mac_of):
+    """The network's gateways for a client's kill switch: each machine with the gateway module at its
+    fixed LAN address, and each moving address with the MACs of every machine that may hold it.
+    `hosts`: [(name, modules, lan address, vip address)]; `mac_of(name)`: its last reported MAC.
+    Each is named after the machines that act (kiwi-killswitch shows the name; it takes no quotes
+    or apostrophes, at most 64 characters)."""
+    out, moving = [], {}
+    for name, modules, lan, vip in hosts:
+        mac = (mac_of(name) or "").lower()
+        if not MAC.match(mac):
+            continue
+        if "gateway" in modules and lan:
+            out.append({"name": name, "ip": lan, "macs": [mac]})
+        if "vip" in modules and vip:
+            moving.setdefault(vip, []).append((name, mac))
+    for ip, held in sorted(moving.items()):
+        who = " or ".join(sorted({n for n, _m in held}))
+        out.append({"name": who if len(who) <= 64 else "the moving address %s" % ip, "ip": ip,
+                    "macs": sorted({m for _n, m in held})})
+    return out
+
+
+DCONF_PATH = re.compile(r"^[a-z0-9][a-z0-9.-]*(/[a-zA-Z0-9.-]+)+$")
+DCONF_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def dconf_files(block):
+    """(keyfile, locks) for a managed computer's GNOME (dconf's system database `local`), or None:
+    `desktop_settings` {path: {key: GVariant text}}, `desktop_locks` [/path/key] its people may not
+    change."""
+    settings = (block or {}).get("desktop_settings") or {}
+    locks = (block or {}).get("desktop_locks") or []
+    if not settings and not locks:
+        return None
+    if not isinstance(settings, dict) or not isinstance(locks, list):
+        raise KiwiError("desktop_settings is a mapping of dconf paths, desktop_locks a list of keys")
+    out = ["# kiwi-server: this managed computer's settings (its profile)"]
+    for path, keys in sorted(settings.items()):
+        if not DCONF_PATH.match(str(path).strip("/")) or not isinstance(keys, dict):
+            raise KiwiError("desktop_settings: %r is not a dconf path with its keys (org/gnome/desktop/screensaver)" % path)
+        out.append("[%s]" % str(path).strip("/"))
+        for key, value in sorted(keys.items()):
+            text = str(value).lower() if isinstance(value, bool) else str(value)
+            if not DCONF_KEY.match(str(key)) or "\n" in text:
+                raise KiwiError("desktop_settings: %s/%s is not a key with a value on one line" % (path, key))
+            out.append("%s=%s" % (key, text))
+    lock_lines = []
+    for lock in locks:
+        if not DCONF_PATH.match(str(lock).strip("/")):
+            raise KiwiError("desktop_locks: %r is not a dconf key (/org/gnome/desktop/screensaver/lock-enabled)" % lock)
+        lock_lines.append("/" + str(lock).strip("/"))
+    return "\n".join(out) + "\n", "\n".join(lock_lines) + ("\n" if lock_lines else "")
+
+
+def profile(fleet, name, linked=(), unlock=None, managed=None, gateways=()):
     """The client's profile, as the agent reads it: one fact a line. The network's CA; its VPN (a
     WireGuard config, as NetworkManager imports it) when it has a place on the VPN, with how much
-    goes through it: `split` only the network (its names to its DNS, the Internet as it was), `full`
-    everything (the config's own AllowedIPs say which)."""
+    goes through it: `split` only the network, `full` everything (the config's own AllowedIPs say
+    which); every name is asked at the network's DNS in both."""
     import base64
     from . import connect as connectmod
     domain = str(fleet.defaults.get("domain") or "home")
@@ -507,6 +769,21 @@ def profile(fleet, name, linked=(), unlock=None):
         full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in data.decode(errors="replace").splitlines())
         lines += ["vpn " + base64.b64encode(data).decode(), "vpn_mode " + ("full" if full else "split"),
                   "search " + ",".join(["~" + domain] + ["~" + d for d in sorted(set(linked)) if d and d != domain])]
+    if os.path.isfile(conf):    # its kill switch's policy (kiwi-killswitch): the modes, the network's gateways
+        import json
+        block = names(fleet).get(name) or {}
+        policy = killswitch_policy(re.sub(r"[^a-z0-9-]", "", domain.split(".")[0].lower()), connectmod.connection_name(domain), block,
+                                   util.read_text(conf), list(gateways), [domain] + [d for d in sorted(set(linked)) if d and d != domain])
+        if policy:
+            lines.append("killswitch " + base64.b64encode(json.dumps(policy, sort_keys=True).encode()).decode())
+    if managed:         # a managed computer: logins with the network's accounts, sudo for its admins
+        lines += ["kind managed", "accounts " + managed["accounts"], "login_groups " + ",".join(managed["login"]),
+                  "admin_groups " + ",".join(managed["admins"]), "lock_software " + ("yes" if managed.get("lock", True) else "no")]
+        if managed.get("apps"):
+            lines.append("apps " + ",".join(managed["apps"]))
+        if managed.get("dconf"):
+            keyfile, locks = managed["dconf"]
+            lines += ["dconf " + base64.b64encode(keyfile.encode()).decode(), "dconf_locks " + base64.b64encode(locks.encode()).decode()]
     if unlock:          # its disk's policy (unlock_tree): kept bound by the agent once a person bound it
         import json
         lines.append("unlock " + base64.b64encode(json.dumps(unlock, sort_keys=True, separators=(",", ":")).encode()).decode())
@@ -521,6 +798,13 @@ def join_script(fleet, name, url, ca):
         raise KiwiError("the client's key is not of letters and digits")
     script = install_script(fleet, name, url, ca)
     return script.replace("key=$(cat)\n", "key='%s'\n" % secret, 1)
+
+
+def join_link(url, code, ca_pem):
+    """The short form for Kiwi Agent (and `kiwi-agent join`): the join address, and after `#ca=` the
+    SHA-256 of the network's CA. The app fetches the CA from the control page, checks it against that
+    sum, and fetches the agent with it."""
+    return "%s/api/client/join/%s#ca=%s" % (url, code, hashlib.sha256(ca_pem.encode() if isinstance(ca_pem, str) else ca_pem).hexdigest())
 
 
 def join_command(url, code, ca_b64):

@@ -6,6 +6,8 @@
 # NetworkManager connection that carries the mesh) and takes an order. A report signed with another
 # key is refused, a join command works once. Afterwards the agent, the connection and the CA are
 # gone from the VM, NAME from the fleet file and from the VPN. KIWI_ORDER=1: an update order too.
+# KIWI_UNLOCK=1 (the default): its disk bound to the network's ring RING (home) with the drill's
+# passphrase, and started with the drill's own rings down; `leave` takes the binding away again.
 #
 #   [VMHOST=sh3] tests/drills/client-agent-vm.sh FLEET [NAME]
 #   e.g. tests/drills/client-agent-vm.sh ~/kiwi/fleet.yaml desk-vm
@@ -94,7 +96,8 @@ n=24; while [ "$n" -gt 0 ]; do vssh "sudo test -s /var/lib/kiwi-client/profile.s
 [ "$n" -gt 0 ]; check $? "its profile is applied"
 vssh "test -s /usr/local/share/ca-certificates/kiwi-home.crt || test -s /etc/pki/ca-trust/source/anchors/kiwi-home.pem"
 check $? "the network's CA is in the VM's trust store"
-vssh "nmcli -t -f NAME connection show --active | grep -qx kiwi-home"; check $? "its VPN connection kiwi-home is up"
+vssh "nmcli -t -f NAME connection show --active | grep -qx kiwi-home"; rc=$?; check $rc "its VPN connection kiwi-home is up"
+[ $rc = 0 ] || { vssh "nmcli -t -f NAME,TYPE,DEVICE connection show; sudo journalctl -t kiwi-client-agent --no-pager -o cat -n 8" 2>&1 | sed 's/^/          /' | cut -c1-200; }
 mesh=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import config
@@ -115,10 +118,44 @@ vssh "sudo sh -c 'cp /etc/kiwi-client/key /run/kiwi-key.keep; printf other > /et
 said | grep -q "report to $url: 403 .*not this client"; rc=$?; check $rc "a report signed with another key is refused (403, not this client's)"
 [ $rc = 0 ] || said | tail -n 5 | sed 's/^/          /' | cut -c1-200
 
-"$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file and off the VPN again"
-vssh "sudo sh -c 'nmcli connection delete kiwi-home >/dev/null 2>&1; rm -f /usr/local/share/ca-certificates/kiwi-home.crt /etc/pki/ca-trust/source/anchors/kiwi-home.pem; update-ca-certificates >/dev/null 2>&1 || update-ca-trust >/dev/null 2>&1; true'"
-vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")"
+# ---- its disk: bound once with its passphrase to the network's ring RING (on its machine at home),
+# then started with the drill's own rings all down: the network's ring alone opens it
+if [ "${KIWI_UNLOCK:-1}" = 1 ]; then
+    ring=${RING:-home}
+    PYTHONPATH="$here/lib" python3 -c '
+import sys
+from kiwiserver import fleettext, util
+path, name, ring = sys.argv[1:4]
+new = fleettext.put(util.read_text(path), ["clients", name], {"unlock": {"rings": [ring]}})     # its block, written anew
+if not new:
+    sys.exit("the fleet file could not be changed in place")
+util.write_text(path, new, 0o600)' "$fleet" "$name" "$ring" && "$KIWI" control push "$fleet" >/dev/null 2>&1
+    check $? "$name's disk is to open by the network's ring $ring"
+    "$KIWI" client policy "$fleet" "$name" | grep -q '"tang"'; check $? "kiwi-server client policy says how"
+    "$KIWI" control order "$fleet" "$name" profile >/dev/null 2>&1
+    n=24; while [ "$n" -gt 0 ]; do vssh "grep -qx 'unlock waits' /run/kiwi-client/status" 2>/dev/null && break; vssh "sudo kiwi-client-agent now" >/dev/null 2>&1; sleep 5; n=$((n - 1)); done
+    [ "$n" -gt 0 ]; check $? "its agent says the disk waits to be bound (and binds nothing by itself)"
+    before_slots=$(vssh "sudo clevis luks list -d \$(lsblk -rpno NAME,FSTYPE | awk '\$2 == \"crypto_LUKS\" {print \$1; exit}')" | wc -l)
+    printf '%s' "${PASS_PHRASE:-kiwitest}" | vssh "sudo /usr/local/sbin/kiwi-client-agent bind --stdin" > "$before.log" 2>&1; rc=$?
+    check $rc "bound with its passphrase on stdin, as the app does$([ $rc = 0 ] || echo ": $(tail -n 2 "$before.log" | tr '\n' ' ' | cut -c1-160)")"
+    after_slots=$(vssh "sudo clevis luks list -d \$(lsblk -rpno NAME,FSTYPE | awk '\$2 == \"crypto_LUKS\" {print \$1; exit}')" | wc -l)
+    [ "$after_slots" -gt "$before_slots" ]; check $? "a slot more on its disk ($before_slots -> $after_slots)"
+    rings                                       # every ring of the drill down
+    vm_start client2.log -uuid 6b1e4c2a-9f3d-4e7b-8a51-2c0d9e7f4a13
+    t0=$(date +%s); up_within 300; check $? "it opens by the network's ring $ring alone ($(( $(date +%s) - t0 )) s)"
+    vssh "sudo date -u -s @$(date +%s) >/dev/null"
+fi
+
+# ---- it leaves: everything the agent put there goes, the agent last
+vssh "sudo /usr/local/sbin/kiwi-client-agent leave" > "$before.log" 2>&1; check $? "it leaves the network ($(tail -n 1 "$before.log" | cut -c1-80))"
+vssh "! nmcli -t -f NAME connection show | grep -qx kiwi-home"; check $? "its VPN connection is gone"
+vssh "! test -e /usr/local/share/ca-certificates/kiwi-home.crt"; check $? "the network's CA is no longer trusted"
+if [ "${KIWI_UNLOCK:-1}" = 1 ]; then
+    left=$(vssh "sudo clevis luks list -d \$(lsblk -rpno NAME,FSTYPE | awk '\$2 == \"crypto_LUKS\" {print \$1; exit}')" | wc -l)
+    [ "$left" = "$before_slots" ]; check $? "its disk has its slots of before ($left)"
+fi
 vssh "! test -e /etc/kiwi-client && ! test -e /usr/local/sbin/kiwi-client-agent"; check $? "the agent is gone from the VM"
+"$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file and off the VPN again"
 cmp -s "$before" "$fleet"; check $? "the fleet file is as it was"
 [ "$fails" = 0 ] && say "all passed" || say "$fails wrong"
 exit $((fails > 0))

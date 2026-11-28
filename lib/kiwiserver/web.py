@@ -996,9 +996,13 @@ href="/devices?q={{ toggled(t.q, "site", x)|urlencode }}" title="Show only this 
 {% if removed %}<p class="banner ok">{{ removed }} is off the VPN. Its connection no longer works.</p>{% endif %}
 <h2 id="add-computer">Add a computer</h2>
 {% if join %}<div class="card"><h2 style="margin-top:0">{{ joining }}: run this on it</h2>
-<p>In a terminal on the computer, at home or on the VPN. It asks for the computer's password (<code>sudo</code>),
-puts the network's agent on it, and from then on the computer shows below.</p>
+{% if join_link %}<p>In <strong>Kiwi Agent</strong> on the computer (<code>kiwi install kiwi-agent</code>), <em>Join a Network…</em>: this link.</p>
+<input readonly style="width:100%;font-family:monospace;font-size:.8rem" onclick="this.select()" value="{{ join_link }}">
+<p class="muted small">Or, without the app, this command in a terminal on the computer:</p>{% else %}
+<p>In a terminal on the computer, at home or on the VPN:</p>{% endif %}
 <textarea readonly rows="4" style="width:100%;font-family:monospace;font-size:.8rem" onclick="this.select()">{{ join }}</textarea>
+<p class="muted small">It asks for the computer's password (<code>sudo</code>), puts the network's agent on it, and from then on the
+computer shows below.</p>
 <p class="warn small">Works once, within a day. Whoever runs it makes their computer this one: do not send it around.</p></div>{% endif %}
 <form method="post" action="/devices/computer-add" class="card">{{ tok }}
 <p class="muted small">A desktop, a laptop, a system on a portable disk: the network sees it run, puts its CA and its VPN
@@ -1469,10 +1473,12 @@ People sign up at <a href="https://{{ id_host }}/join" target="_blank" rel="noop
 <form class="card row" method="post" action="/accounts/create" style="justify-content:flex-start;align-items:flex-end">{{ tok }}
 <div><label for="acc-name">Make one yourself</label><input id="acc-name" name="name" pattern="[a-z][a-z0-9_-]{1,31}" placeholder="lowercase letters and digits" required></div>
 <button>Make the account</button></form>
-{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">Admin</th><th></th></tr></thead><tbody>
+{% if people %}<div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th class="wide">Shown as</th><th class="wide">Jabber</th>{% if play_group %}<th>Game page</th>{% endif %}<th title="May log in to the network's managed computers with this account">Computers</th><th title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there; sudo on the managed computers">Admin</th><th></th></tr></thead><tbody>
 {% for p in people %}<tr><td><b>{{ p.name }}</b></td><td class="wide">{{ p.display }}</td><td class="wide">{{ "yes" if p.jabber else "–" }}</td>
 {% if play_group %}<td><form class="inline" method="post" action="/accounts/games">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
 <input type="hidden" name="note" value="{{ 'off' if p.games else 'on' }}"><button title="Members of {{ play_group }} start and stop the game servers at the game page">{{ "In · leave out" if p.games else "Let in" }}</button></form></td>{% endif %}
+<td><form class="inline" method="post" action="/accounts/computers">{{ tok }}<input type="hidden" name="name" value="{{ p.name }}">
+<input type="hidden" name="note" value="{{ 'off' if p.computers else 'on' }}"><button title="Logs in to the network's managed computers with this account and its password">{{ "Logs in · leave out" if p.computers else "Let log in" }}</button></form></td>
 <td><form class="inline" method="post" action="/accounts/admins"{% if not p.admin %} onsubmit="return confirm('Make {{ p.name }} an admin of Forgejo, Nextcloud and Immich? It takes effect at the next sign-in there.')"{% endif %}>{{ tok }}
 <input type="hidden" name="name" value="{{ p.name }}"><input type="hidden" name="note" value="{{ 'off' if p.admin else 'on' }}">
 <button title="An admin of Forgejo, Nextcloud and Immich, from the next sign-in there">{{ "Admin · take back" if p.admin else "Make admin" }}</button></form></td>
@@ -3387,6 +3393,15 @@ def make_app(control: Control):
             return PlainTextResponse("".join(line + "\n" for line in control.client_answer(name, body)))
         return JSONResponse({"ok": True})
 
+    @app.get("/api/client/ca")
+    def client_ca():
+        """The network's CA certificate: public. A computer that joins by link checks it against the
+        sum in the link before it trusts anything from here."""
+        ca = control.client_ca()
+        if not ca:
+            return JSONResponse({"error": "no CA yet"}, status_code=404)
+        return PlainTextResponse(ca.decode(), headers={"Cache-Control": "no-store"})
+
     @app.get("/api/client/join/{code}")
     def client_join(code: str):
         """The agent for a computer that joins by its one-time command (no login: the code is the
@@ -3410,7 +3425,12 @@ def make_app(control: Control):
             body = None
         name = str((body or {}).get("name") or "") if isinstance(body, dict) else ""
         try:
-            return {"command": control.client_invite(name, user=who if isinstance(who, str) else "api")}
+            hours = int((body or {}).get("hours") or 0) if isinstance(body, dict) else 0
+        except (TypeError, ValueError):
+            hours = 0
+        try:
+            command, link = control.client_invite(name, user=who if isinstance(who, str) else "api", hours=hours or None, both=True)
+            return {"command": command, "link": link}
         except KiwiError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -3543,7 +3563,8 @@ def make_app(control: Control):
                     people.append({"name": name, "display": (p.get("displayname") or [name])[0],
                                    "jabber": any(g.startswith("jabber@") for g in p.get("memberof") or []),
                                    "games": bool(PLAY_HOST) and any(g.startswith(PLAY_GROUP + "@") for g in p.get("memberof") or []),
-                                   "admin": any(g.startswith("admins@") for g in p.get("memberof") or [])})
+                                   "admin": any(g.startswith("admins@") for g in p.get("memberof") or []),
+                                   "computers": any(g.startswith("computers@") for g in p.get("memberof") or [])})
                 invites = control.accounts_read("invites") or []
                 requests = control.accounts_read("requests") or []
             except KiwiError as e:
@@ -3617,6 +3638,9 @@ def make_app(control: Control):
         if what == "admins":                        # the network's admins: Forgejo, Nextcloud, Immich
             control.accounts("member", "admins", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
             return {}
+        if what == "computers":                     # who logs in to the network's managed computers
+            control.accounts("desktop", name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
+            return {}
         if what == "games" and PLAY_HOST:          # who may use the game page: its group
             control.accounts("member", PLAY_GROUP, name.strip().lower(), "off" if note.strip() == "off" else "on", user=u)
             return {}
@@ -3684,10 +3708,11 @@ def make_app(control: Control):
         name = name.strip().lower()
         try:
             if what == "computer-add":          # a person's computer: the command that puts its agent on it
-                command = control.add_computer(name, vpn=vpn == "yes", group=group, full=split == "full", user=u)
-                return devices_page(request, join=command, joining=name)
+                command, link = control.add_computer(name, vpn=vpn == "yes", group=group, full=split == "full", user=u)
+                return devices_page(request, join=command, join_link=link, joining=name)
             if what == "computer-join":         # a new command for one that has not joined, or lost it
-                return devices_page(request, join=control.client_invite(name, u), joining=name)
+                command, link = control.client_invite(name, u, both=True)
+                return devices_page(request, join=command, join_link=link, joining=name)
             if what in ("computer-update", "computer-profile"):     # an order for a person's computer's agent
                 control.order(name, what.split("-", 1)[1], user=u)
                 return devices_page(request, ordered="%s's agent takes it with its next report, within a minute: %s." % (

@@ -341,7 +341,7 @@ def api_for(fleet_dir, key=None):
             raise
         api = Api(r["url"], ca if os.path.isfile(ca) else None, home)
         api.login(r["name"], key, os.path.join(fleet_dir, "control"))
-        util.say("the control node answers at its address at home (%s): this computer is not on the VPN" % home)
+        util.note("the control node answers at its address at home (%s): this computer is not on the VPN" % home)
     return api, key
 
 
@@ -642,15 +642,15 @@ def orders_api(fleet_dir, host=None, key=None):
     return out.get("orders") or []
 
 
-def client_invite_api(fleet_dir, name, key=None):
-    """A computer's one-time join command, from the control node."""
+def client_invite_api(fleet_dir, name, key=None, hours=None, link=False):
+    """A computer's one-time join command, from the control node; `hours` it stays valid (a day)."""
     api, _key = api_for(fleet_dir, key)
-    status, out = api.call("POST", "/api/client/invite", {"name": name})
+    status, out = api.call("POST", "/api/client/invite", dict({"name": name}, **({"hours": hours} if hours else {})))
     if status == 404:
         raise KiwiError("the control node is too old to make join commands: update it (kiwi-server apply <fleet> <its machine> --update)")
     if status != 200 or not isinstance(out, dict):
         raise KiwiError("the control node refused: %s" % ((out or {}).get("error") if isinstance(out, dict) else status))
-    return out["command"]
+    return out.get("link") if link and out.get("link") else out["command"]
 
 
 def clients_api(fleet_dir, key=None):

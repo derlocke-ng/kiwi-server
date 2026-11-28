@@ -5,6 +5,7 @@
 #   accounts.sh list                         the accounts, one JSON object a line
 #   accounts.sh delete NAME
 #   accounts.sh jabber NAME on|off           whether Jabber takes this account (LDAP)
+#   accounts.sh desktop NAME on|off          whether it may log in to the network's managed computers
 #   accounts.sh member GROUP NAME on|off     whether the account is in a group (made when missing), e.g. games;
 #                                            admins: an admin in Forgejo, Nextcloud and Immich at the next sign-in
 #   accounts.sh members GROUP                who is in it, as JSON
@@ -41,7 +42,7 @@ k login >/dev/null 2>&1 || { echo "accounts: the admin could not log in to Kanid
 unset KANIDM_PASSWORD
 # the rules for everyone, set again when the settings change: what a person needs to sign in,
 # how long a password is at least, and (Jabber) that LDAP takes the same password as the pages
-policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }} look2 admins1 {{ brand or 'Kiwi' }}"
+policy="{{ 'mfa' if second_factor else 'any' }} {{ password_min_length }} {{ 'jabber' if ldap else '' }} look2 admins1 computers1 {{ brand or 'Kiwi' }}"
 mark={{ docker_dir }}/{{ container_prefix }}-accounts/data/.kiwi-policy
 if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable idm_all_persons >/dev/null 2>&1 || true
@@ -54,6 +55,15 @@ if [ "$policy" != "$(cat "$mark" 2>/dev/null)" ]; then
     k group account-policy enable jabber >/dev/null 2>&1 || true
     k group account-policy allow-primary-cred-fallback jabber true >/dev/null 2>&1
 {% endif %}
+    # the network's managed computers (kiwi-server's client agent, kanidm-unixd): `computers` may log in
+    # there, `admins` gets sudo there. Both need Unix attributes; a login there takes the person's
+    # password (a passkey does not reach a login screen)
+    for g in computers admins; do
+        k group get "$g" 2>&1 | grep -q "name: $g" || k group create "$g" >/dev/null 2>&1
+        k group posix set "$g" >/dev/null 2>&1 || true
+    done
+    k group account-policy enable computers >/dev/null 2>&1 || true
+    k group account-policy allow-primary-cred-fallback computers true >/dev/null 2>&1 || true
     # the clients made before the network had admins: their claims too
     for c in $(k system oauth2 list 2>/dev/null | sed -n 's/^name: *//p'); do admins_claims "$c"; done
     # Kanidm's own pages look like the network's: its name, and the kiwi as their logo. The domain
@@ -100,10 +110,19 @@ case "${1:-}" in
         else k group remove-members jabber "$2" >/dev/null 2>&1; fi
         k group get jabber 2>/dev/null | grep -q "member: $2@" && on=on || on=off
         printf '{"name": "%s", "jabber": "%s"}\n' "$2" "$on" ;;
+    desktop)    # PERSON on|off: may log in to the network's managed computers (the group `computers`)
+        name_ok "$2"
+        k group get computers 2>&1 | grep -q "name: computers" || { k group create computers >/dev/null 2>&1; k group posix set computers >/dev/null 2>&1; }
+        if [ "${3:-on}" = on ]; then k person posix set "$2" >/dev/null 2>&1; k group add-members computers "$2" >/dev/null 2>&1
+        else k group remove-members computers "$2" >/dev/null 2>&1; fi
+        k group get computers 2>/dev/null | grep -q "member: $2@" && on=on || on=off
+        printf '{"name": "%s", "desktop": "%s"}\n' "$2" "$on" ;;
     member)
         name_ok "$2"; name_ok "$3"
         k group get "$2" 2>&1 | grep -q "name: $2" || k group create "$2" >/dev/null 2>&1
         if [ "${4:-on}" = on ]; then k group add-members "$2" "$3" >/dev/null 2>&1
+            # an admin, or someone of the computers: on a managed computer that is a Unix account
+            case $2 in admins|computers) k person posix set "$3" >/dev/null 2>&1 ;; esac
         else k group remove-members "$2" "$3" >/dev/null 2>&1; fi
         k group get "$2" 2>/dev/null | grep -q "member: $3@" && on=on || on=off
         printf '{"name": "%s", "group": "%s", "member": "%s"}\n' "$3" "$2" "$on" ;;

@@ -43,6 +43,11 @@ L: days. New ideas go to the end of their section.
 10. The client side: devices enrolled and kept by the network (bundles, the app, phones). The owner,
     23 Nov 2026: his workstation's own system (Bluefin-DX, beside lemonaide's uCore on the same
     machine) is to be managed by kiwi-server later too. M-L
+    Built (2.329.0-2.332.0, docs/design/clients.md): the client agent (report, profile with CA, VPN
+    and disk policy, orders, renewal, leave), the join command, the Devices page, the app Kiwi
+    Agent (repo kiwi-agent), install media for Silverblue/Bluefin/Bluefin-DX. Next (the owner, 28
+    Nov): managed company computers, accounts as a domain (Kanidm + kanidm-unixd; Kanidm's SELinux
+    note is the owner's choice), policy (dconf, polkit, Flatpak, browser); NixOS later.
 11. ~~The agent takes orders from the control node: restart a service, update now (scale.md; the
     runbook's actions, asked for by a person).~~ Done (2.326.0): `control order`, `POST /api/orders`,
     signed with the machine's key, in the answer to its report; its answer at once (2.326.1).

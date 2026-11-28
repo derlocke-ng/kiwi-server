@@ -4310,6 +4310,16 @@ class TestCheck(Base):
             rc, out, err = TestManage.run_cli(self, "check", f.path, "--no-public")
         self.assertRegex(out, r"ok +lone +https vault.lone.kiwi answers")
         self.assertEqual(rc, 0, err)
+        # and one that does not answer at all is no pass (it counted as one until 2.326.1)
+        def gone(tgt, script, **kw):
+            if tgt == "core@lone":
+                raise KiwiError("lone: ssh: connect to host lone.kiwi port 22: No route to host")
+            return b"https wg.gate.kiwi 403\n"
+        with mock.patch.object(remote, "run", gone), mock.patch.object(remote, "reach", lambda h, o=None: "core@" + h.name):
+            rc, out, err = TestManage.run_cli(self, "check", f.path, "--no-public")
+        self.assertEqual(rc, 1)
+        self.assertIn("lone: not reached", out)
+        self.assertNotRegex(out, r"ok +lone")
 
     def test_check_asks_the_public_names_from_here(self):
         names = types.SimpleNamespace(_names={"gate.kiwi": ["gate.kiwi", "wg.gate.kiwi", "relay.example.org"],
@@ -7963,8 +7973,17 @@ class TestManage(Base):
         rc, out, err = self.run_cli("remove", f.path, "sh3", "--api", api.url)
         self.assertIn("add --yes to go ahead", err)
         self.assertTrue(os.path.isfile(conf))
+        # its kept secrets, and another machine's
+        pins = os.path.join(self.tmp, "secrets", "pins.json")
+        write(pins, json.dumps({"sh3.kiwi/cloud/admin_password": "kept", "gate.kiwi/dns/pihole_password": "other"}))
         rc, out, err = self.run_cli("remove", f.path, "sh3", "--yes", "--api", api.url)
         self.assertEqual(rc, 0, err)
+        kept = json.loads(util.read_text(pins))
+        self.assertNotIn("sh3.kiwi/cloud/admin_password", kept)          # a new sh3 does not take it over
+        self.assertEqual([v for k, v in kept.items() if k.startswith("removed/") and k.endswith("/sh3.kiwi/cloud/admin_password")],
+                         ["kept"])                                       # set aside, not lost
+        self.assertEqual(kept["gate.kiwi/dns/pihole_password"], "other")
+        self.assertIn("1 kept secret(s) of sh3 set aside", out + err)
         self.assertEqual([c["name"] for c in api.clients], [])          # off the VPN: its key no longer works
         self.assertFalse(os.path.exists(conf))
         self.assertEqual(sorted(config.Fleet.load(f.path).hosts), ["gate"])

@@ -51,7 +51,11 @@ class TestAgentOrders(unittest.TestCase):
         return "order %s %s %s %d %s\n" % (oid, what, target, at, agent.order_signature(key, "quince", oid, what, target, at))
 
     def run_agent(self):
-        r = subprocess.run(["bash", "-c", self.script], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"]),
+        path = os.path.join(self.t, "bin", "kiwi-agent")        # as systemd runs it: by its path, so it can report again
+        with open(path, "w") as f:
+            f.write(self.script)
+        os.chmod(path, 0o755)
+        r = subprocess.run([path], env=dict(os.environ, PATH=self.t + "/bin:" + os.environ["PATH"]),
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
 
@@ -83,9 +87,8 @@ class TestAgentOrders(unittest.TestCase):
         self.assertEqual(len([x for x in said if x.startswith("systemd-run")]), 1)
         self.assertIn("--unit=kiwi-order-o4", [x for x in said if x.startswith("systemd-run")][0])
         self.assertIn(b"facts of quince", self.sent(0))
-        # the next report says what came of them; the same answer again runs nothing twice
-        self.run_agent()
-        self.assertEqual([x for x in self.said() if x.startswith("systemctl")], [])
+        # what came of them goes at once, in a second report (the same answer there runs nothing twice)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.t, "run"))), ["kiwi-agent.last", "kiwi-agent.lock", "sent.0", "sent.1"])
         done = {oid: (rc, text) for oid, rc, text in agent.done_lines(self.sent(1))}
         self.assertEqual(sorted(done), ["o1", "o3", "o4", "o5", "o6"])
         self.assertEqual(done["o1"][0], 0)
@@ -95,10 +98,11 @@ class TestAgentOrders(unittest.TestCase):
         self.assertNotIn("o2", done)                      # never heard of: refused without a word to the sender
         with open(os.path.join(self.t, "logged")) as f:
             self.assertIn("o2 is not signed by the control node", f.read())
-        # told once: the report after has none of them again
-        os.remove(os.path.join(self.t, "answer"))
+        # told once, and nothing ran twice: the minute's report after has none of them again
         self.run_agent()
+        self.assertEqual([x for x in self.said() if x.startswith("systemctl")], [])
         self.assertEqual(agent.done_lines(self.sent(2)), [])
+        self.assertFalse(os.path.exists(os.path.join(self.t, "run", "sent.3")))     # and no second report for nothing
 
     def test_an_order_and_a_report_cannot_pass_for_each_other(self):
         self.assertNotEqual(agent.order_signature(KEY, "quince", "1", "2", "3", "4"),

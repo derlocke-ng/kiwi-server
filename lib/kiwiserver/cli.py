@@ -1385,6 +1385,21 @@ def cmd_remove(args):
     for d in {os.path.join(out_dir_for(args, fleet), name), os.path.join(media_dir_for(args, fleet), name)}:
         if os.path.isdir(d):
             shutil.rmtree(d)
+    # its kept secrets (pins: values of its services' databases and accounts): set aside, not deleted.
+    # A machine added later under the same name would otherwise take them over; the machine removed
+    # may still run with them (it is not wiped here), so they stay in the store under removed/
+    pins_path = fleet.resolve_path("secrets/pins.json")
+    if os.path.isfile(pins_path):
+        pins = json.loads(util.read_text(pins_path))
+        mine = [k for k in pins if k.startswith(h.hostname + "/")]
+        if mine:
+            day = time.strftime("%Y-%m-%d")
+            for k in mine:
+                pins["removed/%s/%s" % (day, k)] = pins.pop(k)
+            util.write_text(pins_path, json.dumps(pins, indent=1, sort_keys=True) + "\n", 0o600)
+            store.Store.for_fleet(fleet.path).sync()            # into secrets.age at once
+            util.say("%d kept secret(s) of %s set aside in the store (secrets/pins.json, removed/%s/…): a machine added "
+                     "later under its name does not take them over" % (len(mine), name, day))
     def forget(state):
         for key in ("applied", "backup_clients", "rendered", "rendered_system", "hold", "hold_parts", "off", "installed_media"):
             (state.get(key) or {}).pop(name, None)
@@ -3600,12 +3615,13 @@ def cmd_check(args):
                 failed.append("%s %s" % (kind, name))
     from . import careful as carefulmod
     for h, mine in apart:
-        try:
-            bad = dict(b.rsplit(":", 1) for b in carefulmod.answers(h, remote.reach(h, args.ssh), mine, run=remote.run, wait=0) if ":" in b)
-        except KiwiError as e:
-            print("%s: not reached: %s" % (h.name, e))
+        said = carefulmod.answers(h, remote.reach(h, args.ssh), mine, run=remote.run, wait=0)
+        away = [b for b in said if b.startswith(h.name + " (")]      # the machine itself did not answer
+        if away:
+            print("%s: not reached: %s" % (h.name, away[0][len(h.name) + 2:-1]))
             failed.append(h.name)
             continue
+        bad = dict(b.rsplit(":", 1) for b in said if ":" in b)
         for name in mine:
             ok = name not in bad and h.name not in bad
             print("%s %-7s %-5s %s %s" % ("ok    " if ok else "FAILED", h.name, "https", name, "answers" if ok else bad.get(name, "000")))

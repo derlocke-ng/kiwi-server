@@ -16834,7 +16834,7 @@ class TestRecovery(Base):
         self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
         write(p, openermod.SCRIPT)
         self.assertEqual(subprocess.run(["bash", "-n", p]).returncode, 0)
-        self.assertIn("systemctl enable --now -q kiwi-opener.timer", script)
+        self.assertIn("kiwi_enable --now kiwi-opener.timer", script)
         self.assertEqual(calls[1], (openermod.REMOVE, None))                 # a machine that opens nobody: none
         # an opener without an encrypted disk is none: the key would lie in the clear
         plain = dict(lychee, debian={"encrypt": False})

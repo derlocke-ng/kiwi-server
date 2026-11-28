@@ -120,6 +120,9 @@ ks_put() { # TMP DEST MODE OWNER   — TMP becomes DEST; KS_WROTE: 1 when DEST w
     chown "$owner" "$tmp"
     ks_replace "$tmp" "$dest"
     KS_WROTE=1
+    case $dest in       # a unit, a drop-in or a quadlet: systemd has to read its units again (ks_reload)
+        "${KS_SYSTEMD_DIR:-/etc/systemd/system}"/*|/etc/systemd/system/*|/etc/containers/systemd/*) KS_RELOAD_DUE=1 ;;
+    esac
 }
 
 ks_file() { # KEY DEST [MODE] [OWNER]   — write a file the generator provided
@@ -224,7 +227,7 @@ ks_ensure_podman() {
         ks_die "podman $pv is too old for quadlets (4.4 or newer) — Debian trixie, or runtime: docker in the role block"
     fi
     # the API socket: what Portainer (and anything else that speaks docker) talks to
-    systemctl enable --now podman.socket 2>/dev/null || true
+    ks_enable --now podman.socket 2>/dev/null || true
     install -d -m 0755 /etc/containers/systemd
 }
 # Docker turns iptables' FORWARD policy to DROP when it starts, and what podman publishes goes
@@ -297,9 +300,50 @@ ks_git_clone() { # URL REF DIR   — clone, or bring an existing clone to REF
 }
 
 # ---- services / firewall --------------------------------------------------------------
+# systemd reads all its units again (daemon-reload): a quarter of a second on a small virtual
+# machine, a second and a half on a Rock Pi. `systemctl enable` and `disable` do it every time,
+# changed or not. An apply that changed nothing did it seventeen times (28 Nov 2026); now only
+# when a unit was written or removed, and a unit is enabled only when it is not yet.
+KS_RELOAD_DUE=0
+ks_reload() { # [all]   — when a unit or quadlet was written or removed since the last time. `all`: or when
+    # anything under the units' folders is newer than this tool's last reload (someone else wrote a
+    # unit; or the machine started since: the mark lies under /run). To ask systemd itself which
+    # unit wants a reload takes longer than the reload
+    local mark=${KS_RELOAD_MARK:-/run/kiwi-stack/units-read}
+    if (( ! KS_RELOAD_DUE )) && [[ ${1:-} == all ]]; then
+        # (files only: this tool's own writes pass through a temporary file beside the unit, and
+        # that alone makes the folder itself newer)
+        if [[ ! -e $mark ]] || [[ -n $(find "${KS_SYSTEMD_DIR:-/etc/systemd/system}" /etc/containers/systemd \
+                                        \( -type f -o -type l \) -newer "$mark" -print -quit 2>/dev/null) ]]; then
+            KS_RELOAD_DUE=1
+        fi
+    fi
+    (( KS_RELOAD_DUE )) || return 0
+    systemctl daemon-reload
+    KS_RELOAD_DUE=0
+    mkdir -p "${mark%/*}" 2>/dev/null && : > "$mark" || true
+}
+ks_enable() { # [--now] UNIT...   — enabled, and with --now started, when it is not yet
+    local now=0 u rc=0
+    if [[ ${1:-} == --now ]]; then now=1; shift; fi
+    for u in "$@"; do
+        systemctl is-enabled -q "$u" 2>/dev/null || systemctl enable -q "$u" || rc=1
+        if (( now )); then systemctl is-active -q "$u" 2>/dev/null || systemctl start "$u" || rc=1; fi
+    done
+    return $rc
+}
+ks_disable() { # [--now] UNIT...   — disabled (and stopped) when it is enabled or runs; one that is not there costs nothing
+    local now=() u
+    if [[ ${1:-} == --now ]]; then now=(--now); shift; fi
+    for u in "$@"; do
+        if systemctl is-enabled -q "$u" 2>/dev/null || systemctl is-active -q "$u" 2>/dev/null; then
+            systemctl disable -q "${now[@]}" "$u" 2>/dev/null || true
+        fi
+    done
+}
 ks_unit() { # NAME   — unit file on stdin; systemd reads its units again when this one changed
     ks_write "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" 0644
-    if (( KS_WROTE )); then systemctl daemon-reload; fi
+    ks_reload
 }
 ks_firewall_open() { # PORT/PROTO...
     if systemctl is-active -q firewalld 2>/dev/null; then
@@ -406,7 +450,7 @@ ks_firewall_lan() { # the table kiwi_lan, kept across reboots by kiwi-lan.servic
         if [[ -f $f ]]; then
             ks_say "the groups of the home network: none any more"
             [[ -n $nft ]] && "$nft" delete table inet kiwi_lan 2>/dev/null || true
-            systemctl disable -q kiwi-lan.service 2>/dev/null || true
+            ks_disable kiwi-lan.service
             rm -f "$f" "${KS_SYSTEMD_DIR:-/etc/systemd/system}/kiwi-lan.service"
         fi
         return 0
@@ -437,7 +481,7 @@ ExecStart=$nft -f $f
 [Install]
 WantedBy=multi-user.target
 UNIT
-    systemctl enable -q kiwi-lan.service 2>/dev/null || true
+    ks_enable kiwi-lan.service 2>/dev/null || true
 }
 
 ks_vlan_name() { # PARENT ID   — the tagged interface's name: eth0.20, or vlan20 where that is too long
@@ -494,7 +538,7 @@ ks_vlans() { # the tagged interfaces of KS_STACK_VLANS, kept across reboots by k
     if [[ -z $new ]]; then
         if [[ -f $f ]]; then
             ks_say "tagged interfaces (VLANs): none any more"
-            systemctl disable -q kiwi-vlans.service 2>/dev/null || true
+            ks_disable kiwi-vlans.service
             rm -f "$f" "$up" "$unit"
         fi
         return 0
@@ -530,7 +574,7 @@ ExecStart=$up $f
 [Install]
 WantedBy=multi-user.target
 UNIT
-    systemctl enable -q kiwi-vlans.service 2>/dev/null || true
+    ks_enable kiwi-vlans.service 2>/dev/null || true
 }
 
 ks_self_signed_cert() { # CERT KEY CN   — a stop-gap until real certificates exist
@@ -715,8 +759,9 @@ ks_stack_drop_units() {
         ks_say "removing the host unit $unit — no module installs it any more"
         systemctl disable --now "$unit" 2>/dev/null || true
         rm -f "${KS_SYSTEMD_DIR:?}/$unit"
+        KS_RELOAD_DUE=1
     done
-    systemctl daemon-reload 2>/dev/null || true
+    ks_reload 2>/dev/null || true
 }
 
 ks_stack_drop_files() { # DIR
@@ -888,7 +933,7 @@ ks_stack_units_start() { # 1: the stack was started from nothing
         if (( ! claimed )); then all=1; fi
     done
     for unit in "${KS_STACK_UNITS[@]}"; do
-        systemctl enable -q "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
+        ks_enable "$unit" 2>/dev/null || true   # a service its timer owns has no [Install]
         due=$all
         if (( ! due )); then
             for f in "${changes[@]}"; do
@@ -1183,16 +1228,22 @@ ks_stack_unpack() {
         for q in /etc/containers/systemd/*.network; do
             [[ -f $q ]] && old_net[$(basename "$q")]=$(sha256sum < "$q")
         done
-        # one file at a time: on a fresh machine the globs match nothing, and a grep
-        # over the literal patterns exits 2, which pipefail turned into a failed apply
-        for q in /etc/containers/systemd/*.container /etc/containers/systemd/*.network; do
-            if [[ -f $q ]] && grep -qsF '# kiwi-server stack' "$q"; then rm -f "$q"; fi
-        done
+        # written first: one that is as it was stays untouched, and systemd need not read its units
+        # again for it. (Until 0.9.42 every quadlet was removed and written anew with each apply.)
         for q in "${KS_STACK_QUADLETS[@]}"; do
             case $q in
                 *.target) ks_file "quadlet/$q" "$KS_SYSTEMD_DIR/$q" 0644 ;;
                 *)        ks_file "quadlet/$q" "/etc/containers/systemd/$q" 0600 ;;
             esac
+        done
+        # then every unit this tool wrote before and no module has any more goes, so a module that
+        # left the stack takes its container with it. One file at a time: on a fresh machine the
+        # globs match nothing, and a grep over the literal patterns exits 2, which pipefail turned
+        # into a failed apply
+        for q in /etc/containers/systemd/*.container /etc/containers/systemd/*.network; do
+            [[ -f $q ]] && grep -qsF '# kiwi-server stack' "$q" || continue
+            [[ " ${KS_STACK_QUADLETS[*]} " == *" ${q##*/} "* ]] && continue
+            rm -f "$q"; KS_RELOAD_DUE=1
         done
         for q in "${KS_STACK_QUADLETS[@]}"; do
             [[ $q == *.network ]] || continue
@@ -1410,7 +1461,7 @@ ks_time_sync_at_boot() {
     # trims a clock that is already close, so behind chrony it sits out its whole timeout
     # and fails, at every boot. chrony brings its own waiter.
     if systemctl is-enabled -q chronyd.service 2>/dev/null && systemctl cat chrony-wait.service >/dev/null 2>&1; then
-        systemctl disable -q "$wait" 2>/dev/null || true
+        ks_disable "$wait"
         systemctl reset-failed "$wait" 2>/dev/null || true
         wait=chrony-wait.service
     elif [[ ! -x /usr/lib/systemd/systemd-time-wait-sync ]]; then
@@ -1428,7 +1479,7 @@ ks_time_sync_at_boot() {
         "ExecStart=/bin/sh -c '$cmd || echo \"the clock is not synchronized after 90 seconds: going on\"'" \
         'TimeoutStartSec=120' |
         ks_unit "$wait.d/90-kiwi.conf"
-    systemctl enable -q "$wait"
+    ks_enable "$wait"
     systemctl reset-failed "$wait" 2>/dev/null || true
 }
 
@@ -1521,7 +1572,7 @@ Persistent=false
 [Install]
 WantedBy=timers.target
 UNIT
-        systemctl enable --now kiwi-stack-vpn-restart.timer
+        ks_enable --now kiwi-stack-vpn-restart.timer
     fi
     if [[ -n $weekly ]]; then
         ks_unit kiwi-stack-update.service <<UNIT
@@ -1546,7 +1597,7 @@ RandomizedDelaySec=10min
 [Install]
 WantedBy=timers.target
 UNIT
-        systemctl enable --now kiwi-stack-update.timer
+        ks_enable --now kiwi-stack-update.timer
     fi
 }
 
@@ -1570,11 +1621,11 @@ ks_stack_apply() {
     if [[ ${#KS_STACK_PORTS[@]} -gt 0 ]]; then
         ks_firewall_open "${KS_STACK_PORTS[@]}"; ks_took ks_firewall_open
     fi
-    systemctl daemon-reload; ks_took "systemctl daemon-reload"
+    ks_reload all; ks_took "systemctl daemon-reload"
     ks_stack_pull; ks_took ks_stack_pull
     ks_say "starting the stack (${KS_STACK_MODULES[*]})"
     ks_stack_units; ks_took ks_stack_units
-    systemctl enable -q kiwi-stack.service
+    ks_enable kiwi-stack.service
     if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service && (( ! ${KS_STACK_FROM_THE_START:-0} )); then
         # a running stack: what is new starts, what changed restarts (a bind mount keeps the old
         # inode, so a changed file needs it), and the rest goes on serving (problem 55). What
@@ -1583,7 +1634,7 @@ ks_stack_apply() {
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
         ks_say "the stack is running: restarting what changed (${changed[*]:-nothing}), starting what is new"
-        /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
+        KS_RELOADED=1 /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         local failed=0
         for svc in "${changed[@]}"; do
             if [[ " ${KS_STACK_LEASED[*]:-} " == *" $svc "* ]]; then    # only if it runs: it runs by its permission
@@ -1622,13 +1673,13 @@ ks_stack_parts() {
     ks_say "only the stack changed: its names and files, and what changed restarts"
     ks_stack_hosts
     ks_stack_unpack
-    systemctl daemon-reload
+    ks_reload all
     if [[ $KS_STACK_RUNTIME == podman ]] && systemctl -q is-active kiwi-stack.service; then
         local changed=() svc failed=0
         mapfile -t changed < <(ks_stack_restart_due)
         ks_stack_names_now; changed+=("${KS_NAMES_FAILED[@]}")
         ks_say "restarting what changed (${changed[*]:-nothing}), starting what is new"
-        /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
+        KS_RELOADED=1 /usr/local/bin/kiwi-stack up || ks_die "the stack did not start — journalctl -u kiwi-stack"
         for svc in "${changed[@]}"; do
             if [[ " ${KS_STACK_LEASED[*]:-} " == *" $svc "* ]]; then
                 systemctl try-restart "$svc.service" || { ks_warn "$svc did not restart — kiwi-stack logs $svc"; failed=1; }

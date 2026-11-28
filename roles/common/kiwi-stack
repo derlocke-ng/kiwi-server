@@ -343,7 +343,8 @@ update_one_by_one() {
 if [[ $STACK_RUNTIME == podman ]]; then
     case "${1:-}" in
         start)   systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on; host_units restart --no-block ;;
-        up)      systemctl daemon-reload; systemctl start kiwi-stack.target; mesh_route; own_dns on ;;
+        up)      [[ -n ${KS_RELOADED:-} ]] || systemctl daemon-reload      # (an apply has done that itself, when it was due)
+                 systemctl start kiwi-stack.target; mesh_route; own_dns on ;;
         stop)    own_dns off; host_units stop; systemctl stop kiwi-stack.target; mapfile -t u < <(units); systemctl stop "${u[@]}" ;;
         restart) "$0" stop; "$0" start ;;
         update)  backup_first || exit 1

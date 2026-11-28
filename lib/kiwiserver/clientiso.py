@@ -51,8 +51,10 @@ WantedBy=multi-user.target
 def signed(img):
     """Universal Blue's images are signed, and their own policy knows the key: after the install the
     computer is switched to the signed origin (what ublue's isogenerator did), so that every update
-    is checked against it. Fedora's own image is not switched."""
-    return img.startswith("ghcr.io/ublue-os/")
+    is checked against it; phoenix-desktop carries its own key and policy the same way (its own
+    switch at boot fails on a running system: /sysroot is read-only there, 28 Nov 2026). Fedora's
+    own image is not switched."""
+    return img.startswith(("ghcr.io/ublue-os/", "ghcr.io/derlocke-ng/phoenix-desktop"))
 
 
 def image(system, override=None):

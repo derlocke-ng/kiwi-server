@@ -101,8 +101,11 @@ case $system in phoenix*)      # Bluefin with clevis in its boot system (github.
     vssh "grep -qw rd.neednet=1 /proc/cmdline"; check $? "$system: the network at boot (rd.neednet=1, the image's kargs.d)"
     vssh "{ sudo lsinitrd -m; sudo lsinitrd -m /usr/lib/modules/\$(uname -r)/initramfs.img; } 2>/dev/null | grep -qx clevis"
     check $? "$system: clevis in its boot system"
-    n=30; while [ "$n" -gt 0 ]; do vssh "sudo bootc status 2>/dev/null | grep -q ostree-image-signed" && break; sleep 10; n=$((n - 1)); done
-    [ "$n" -gt 0 ]; check $? "$system: its updates are checked against the image's signature (bootc status)" ;;
+    ;;
+esac
+case $system in bluefin*|phoenix*)     # switched to the signed origin at the end of the install
+    vssh "rpm-ostree status 2>/dev/null | grep -q 'ostree-image-signed:'"
+    check $? "$system: its updates are checked against the image's signature (rpm-ostree status)" ;;
 esac
 # a VM behind its host's NAT asks its host's resolver (on sh3: v1's, which knows no .home names)
 url=$(sed -n 's|.*\(https://[^/]*\)/api/client/join/.*|\1|p' "$w/ks.cfg" | head -n 1); host=${url#https://}

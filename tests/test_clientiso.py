@@ -32,6 +32,8 @@ class TestClientIso(unittest.TestCase):
         self.assertIn("bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry "
                       "ghcr.io/ublue-os/bluefin-dx:stable", ks)                           # signed updates from then on
         self.assertNotIn("bootc switch", clientiso.kickstart("desk", clientiso.image("silverblue"), URL, CA))
+        self.assertIn("bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry "
+                      "ghcr.io/derlocke-ng/phoenix-desktop:stable", clientiso.kickstart("desk", clientiso.image("phoenix"), URL, CA))
         managed = clientiso.kickstart("desk", clientiso.image("bluefin"), URL, CA, managed=True,
                                       admin_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN it@company")
         self.assertIn('user --name=kiwi --groups=wheel --lock', managed)

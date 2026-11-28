@@ -36,7 +36,8 @@ admin=$(python3 -c "import yaml; print(yaml.safe_load(open('fleet/fleet.yaml'))[
 
 vh_prepare; rc=$?; check $rc "the VM's folder on ${VMHOST:-this computer}: $VD"; [ $rc = 0 ] || exit 1
 tunnel_up 7611 7612 7613; check $? "the test rings reach ${VMHOST:-the VM}"
-rings health1 health2 auto; vm_start client1.log
+# a board id of its own (qemu gives none without it): the agent sums it into the box it runs on
+rings health1 health2 auto; vm_start client1.log -uuid 6b1e4c2a-9f3d-4e7b-8a51-2c0d9e7f4a13
 up_within 300; rc=$?; check $rc "the desktop VM is up (its disk opened by its rings)"; [ $rc = 0 ] || exit 1
 
 "$KIWI" control pull "$fleet" >/dev/null 2>&1 || true
@@ -89,10 +90,10 @@ IFS='|' read -r os box crypt clevis agent <<<"$row"
 case $os in *Debian*) true ;; *) false ;; esac; check $? "its system: ${os:-?}"
 [ ${#box} = 16 ]; check $? "the box it runs on, as a salted sum: ${box:-none}"
 [ "${crypt:-0}" -ge 1 ] && [ "${clevis:-0}" -ge 1 ]; check $? "its disk: ${crypt:-?} encrypted, ${clevis:-?} bound to rings"
-vssh "journalctl -t kiwi-client-agent --no-pager -o cat | grep -q 'report to $url: 200'"; check $? "the VM's journal says the control node took it"
+vssh "sudo journalctl -t kiwi-client-agent --no-pager -o cat | grep -q 'report to $url: 200'"; check $? "the VM's journal says the control node took it"
 
 vssh "sudo sh -c 'cp /etc/kiwi-client/key /run/kiwi-key.keep; printf other > /etc/kiwi-client/key; rm -f /run/kiwi-client-agent.last; /usr/local/sbin/kiwi-client-agent; cp /run/kiwi-key.keep /etc/kiwi-client/key; rm -f /run/kiwi-key.keep'"
-vssh "journalctl -t kiwi-client-agent --since '-2 min' --no-pager -o cat | grep -q 'report to $url: 403'"; check $? "a report signed with another key is refused (403)"
+vssh "sudo journalctl -t kiwi-client-agent --since '-2 min' --no-pager -o cat | grep -q 'report to $url: 403'"; check $? "a report signed with another key is refused (403)"
 
 "$KIWI" client remove "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1; check $? "$name is out of the fleet file again"
 vssh "sudo sh -c $(printf '%q' "$(PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent; print(clientagent.REMOVE)')")"

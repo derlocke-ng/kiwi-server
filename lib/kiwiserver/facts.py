@@ -30,8 +30,9 @@ fi
 (. /etc/os-release 2>/dev/null; kv os "${PRETTY_NAME:-}")
 # the box, summed as the network's clients sum theirs (docs/design/clients.md): a person's system
 # booted on this hardware (a pentest SSD) is shown on it. Only with the agent's salt: x86 boards
-if [ -r /etc/kiwi-server/agent/salt ] && [ -r /sys/class/dmi/id/product_uuid ]; then
-    kv box "$(printf '%s\n%s' "$(cat /etc/kiwi-server/agent/salt)" "$(cat /sys/class/dmi/id/product_uuid)" | sha256sum | cut -c1-16)"
+uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr -d ' \n' | grep -viE '^[0-]*$|^[f-]*$')
+if [ -r /etc/kiwi-server/agent/salt ] && [ -n "$uuid" ]; then
+    kv box "$(printf '%s\n%s' "$(cat /etc/kiwi-server/agent/salt)" "$uuid" | sha256sum | cut -c1-16)"
 fi
 kv kernel "$(uname -r)"
 kv uptime "$(cut -d. -f1 /proc/uptime)"

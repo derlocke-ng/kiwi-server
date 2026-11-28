@@ -27,7 +27,8 @@ VERSION = 1
 
 FACTS = r'''
 # what the control node keeps of this computer, one fact a line
-uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null)
+# a board without an id of its own (all zeros or all F: many cheap ones, a VM without one) has no box
+uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr -d ' \n' | grep -viE '^[0-]*$|^[f-]*$')
 [ -n "$uuid" ] && echo "box $(printf '%%s\n%%s' "$(cat "$d/salt")" "$uuid" | sha256sum | cut -c1-16)"
 if [ -r /etc/os-release ]; then . /etc/os-release; echo "os ${PRETTY_NAME:-$ID}"; echo "os_id ${ID:-} ${VERSION_ID:-}"; fi
 echo "kernel $(uname -r)"

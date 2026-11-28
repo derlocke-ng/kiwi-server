@@ -870,6 +870,7 @@ KS_QUADLET_DIR=${KS_QUADLET_DIR:-/etc/containers/systemd}
 declare -gA KS_BEFORE=() KS_BEFORE_NAMELESS=() KS_BEFORE_NAMES=()
 KS_CHANGED=()
 KS_NAMES_ONLY=()        # quadlets that changed in nothing but the names they give their container
+KS_LIVE_CHANGED=()      # files that changed and that their part reads again by itself (KS_STACK_LIVE)
 KS_NAMES_FAILED=()
 
 # A quadlet without the names it gives its container (its AddHost lines). A new site on the machine
@@ -905,12 +906,24 @@ ks_stack_remember() {   # the files and quadlets as they are before the apply wr
     return 0
 }
 
+# A file its part reads again by itself while it runs (a module's `live` output: the DNS names in
+# dnsmasq's hostsdir): its change is no reason to restart the container that mounts it. Until
+# 0.9.46 a new or removed site restarted Pi-hole on every DNS machine of the network.
+ks_live() { # PATH: one of KS_STACK_LIVE (relative to the stack folder)
+    local r
+    for r in "${KS_STACK_LIVE[@]:-}"; do
+        [[ -n $r && $1 == "$KS_STACK_DIR/$r" ]] && return 0
+    done
+    return 1
+}
+
 ks_stack_compare() {    # KS_CHANGED: every file or quadlet that is new or different now
     local entry p q
-    KS_CHANGED=()
+    KS_CHANGED=(); KS_LIVE_CHANGED=()
     for entry in "${KS_STACK_FILES[@]}"; do
         p=$KS_STACK_DIR/${entry%:*}
-        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] || KS_CHANGED+=("$p")
+        [[ -f $p && ${KS_BEFORE[$p]:-} == "$(sha256sum < "$p")" ]] && continue
+        if [[ -f $p ]] && ks_live "$p"; then KS_LIVE_CHANGED+=("$p"); else KS_CHANGED+=("$p"); fi
     done
     for q in "${KS_STACK_UNITS[@]}"; do
         p=${KS_SYSTEMD_DIR:-/etc/systemd/system}/$q
@@ -1057,8 +1070,8 @@ ks_stack_note_pending() {
     if (( ${#KS_NAMES_ONLY[@]} )); then
         for q in "${KS_NAMES_ONLY[@]}"; do basename "$q" .container; done > "$(ks_pending_names)"
     fi
-    if [[ ${KS_TIMES:-0} == 1 ]] && (( ${#KS_CHANGED[@]} + ${#KS_NAMES_ONLY[@]} )); then    # with the times: what changed, by name
-        echo "[times] changed: ${KS_CHANGED[*]##*/}${KS_NAMES_ONLY[*]:+; names only: ${KS_NAMES_ONLY[*]##*/}}"
+    if [[ ${KS_TIMES:-0} == 1 ]] && (( ${#KS_CHANGED[@]} + ${#KS_NAMES_ONLY[@]} + ${#KS_LIVE_CHANGED[@]} )); then    # with the times: what changed, by name
+        echo "[times] changed: ${KS_CHANGED[*]##*/}${KS_NAMES_ONLY[*]:+; names only: ${KS_NAMES_ONLY[*]##*/}}${KS_LIVE_CHANGED[*]:+; read again while running: ${KS_LIVE_CHANGED[*]##*/}}"
     fi
     # something of the stack changed: its units (a part's setup that runs on the machine) have to
     # run again, at this apply or, when it ends before, at the next

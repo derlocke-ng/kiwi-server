@@ -3,7 +3,8 @@ host units rendered here, compared by hash with the machine's, and the container
 restart for it, by the rule kiwi-stack itself applies (roles/common/lib.sh,
 ks_stack_changed_services: a container restarts when its quadlet changed, or a file it mounts
 or reads; one whose quadlet changed only in the names it gives the container, its AddHost lines,
-takes them while it runs), and the kiwi-stack tool and library. The rest of the role script
+takes them while it runs; a file its part reads again by itself, a module's `live` output like
+the DNS names, restarts nothing), and the kiwi-stack tool and library. The rest of the role script
 (packages, sshd, sysctl) is not compared.
 """
 import hashlib
@@ -42,6 +43,13 @@ def wanted(host, bundle):
     return out
 
 
+def live(host, bundle):
+    """The paths on the machine whose change restarts nothing: their part reads them again by
+    itself (module.yaml `live`; kiwi-stack: KS_STACK_LIVE)."""
+    d = (host.role_settings or {}).get("docker_dir") or "/home/user/docker"
+    return {"%s/%s" % (d, rel) for rel in getattr(bundle, "live", None) or ()}
+
+
 def machine(tgt, paths):
     """(release that wrote the stack, {path: sha256}, [services]) as the machine has them."""
     script = ("head -n1 %s 2>/dev/null | sed 's/^/V /'\n" % STACK_ENV +
@@ -65,8 +73,9 @@ def machine(tgt, paths):
     return version, have, services
 
 
-def compare(bundle, want, have, services_before):
+def compare(bundle, want, have, services_before, live=()):
     changed = sorted(p for p in want if have.get(p) != want[p])
+    counted = [p for p in changed if p not in live]       # what a container restarts for
     quadlets = getattr(bundle, "quadlets", None) or {}
     restart, new, names = [], [], []
     for svc in bundle.services:
@@ -87,11 +96,12 @@ def compare(bundle, want, have, services_before):
                 src = line[len("EnvironmentFile="):]
             else:
                 continue
-            hit = any(p == src or p.startswith(src.rstrip("/") + "/") for p in changed)
+            hit = any(p == src or p.startswith(src.rstrip("/") + "/") for p in counted)
         if hit:
             restart.append(svc)
         elif named:
             names.append(svc)
     removed = [s for s in services_before if s not in bundle.services]
-    return {"changed": [{"path": p, "new": p not in have} for p in changed], "restart": restart, "names": names,
+    return {"changed": [dict({"path": p, "new": p not in have}, **({"live": True} if p in live else {})) for p in changed],
+            "restart": restart, "names": names,
             "new_services": new, "removed_services": removed, "quadlets": bool(quadlets)}

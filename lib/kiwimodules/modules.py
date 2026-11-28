@@ -484,6 +484,7 @@ class Bundle:
         self.service_modules = {}   # container name -> the module it is of ("km-pihole" -> "dns")
         self.urls = []         # what the operator can open afterwards
         self.preflight = []    # "container|command": asked on the machine before the stack is written
+        self.live = set()      # relpaths a running part reads again by itself: their change restarts nothing
         self.compose = None
         self.vpn_dependents = []   # containers inside the VPN client's network namespace
         self.mesh_via = ""         # the container the host routes the mesh through
@@ -1190,6 +1191,8 @@ class Renderer:
                     continue
                 rel = self.expand(out.get("path") or "%s/%s" % (name, fname.replace(".j2", "")), ctx, where)
                 bundle.add_file(rel, text, int(out.get("mode", 0o644)))
+                if out.get("live"):     # dnsmasq's hostsdir: read again by the running part (module.yaml `live`)
+                    bundle.live.add(rel.strip("/"))
                 if name == "reverse-proxy" and key == "nginx" and ready_proxy:
                     text = self.render_text(mod.template(key), dict(ctx, output=key, **ready_proxy),
                                             "modules/%s/%s" % (name, fname))

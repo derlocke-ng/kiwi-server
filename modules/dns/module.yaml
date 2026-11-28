@@ -48,13 +48,20 @@ templates:
   mullvad_socks_timer: mullvad-socks.timer.j2
   mullvad_socks_about: mullvad-socks.about.j2
   moving_hosts: moving.hosts.j2
+  fleet_hosts: fleet.hosts.j2
   blocklist_script: blocklist.sh.j2
   blocklist_service: blocklist.service.j2
   blocklist_timer: blocklist.timer.j2
   federation_ask: federation-ask.j2
 
-# the fleet's DNS records go in as FTLCONF_dns_hosts (pihole.toml dns.hosts):
-# Pi-hole 6 regenerates hosts/custom.list itself, a file put there is ignored.
+# the fleet's DNS records are a hosts file of their own (fleet.hosts.j2) in a directory dnsmasq
+# watches (hostsdir): a new or removed site rewrites the file, and the running Pi-hole reads it
+# again within a second. Until kiwi-modules 0.140.0 they went in as FTLCONF_dns_hosts (pihole.toml
+# dns.hosts), and every change of a name restarted Pi-hole on every DNS machine of the network: a
+# moment without names for the whole home. (Pi-hole 6 regenerates hosts/custom.list itself, a file
+# put there is ignored; its admin page no longer lists these names as "Local DNS records".)
+# `live: true` on an output: the part reads that file again by itself, an apply that changes it
+# restarts nothing (kiwi-stack KS_STACK_LIVE).
 # The Mullvad SOCKS5 records change without a render, so they live in a hosts
 # file of their own that a host timer refreshes; dnsmasq watches its directory
 # (hostsdir) and reloads it by itself. The directory is root's and mounted
@@ -66,7 +73,8 @@ outputs:
   mullvad_socks_timer: { kind: host_unit, name: "{{ container_prefix }}-mullvad-socks.timer", when: mullvad_socks }
   mullvad_socks_about: { path: "{{ container_prefix }}-pihole/mullvad-socks/.kiwi-server", mode: 0644, when: mullvad_socks }
   # the names of parts kept ready on another machine: a switch rewrites the file (kiwi-server switch)
-  moving_hosts: { path: "{{ container_prefix }}-pihole/moving/kiwi.hosts", mode: 0644, when: moving }
+  moving_hosts: { path: "{{ container_prefix }}-pihole/moving/kiwi.hosts", mode: 0644, when: moving, live: true }
+  fleet_hosts: { path: "{{ container_prefix }}-pihole/names/kiwi.hosts", mode: 0644, live: true }
   # an empty blocklist is fetched again (blocklist.sh.j2 says why it can be empty)
   blocklist_script: { path: "kiwi/pihole-blocklist.sh", mode: 0755 }
   blocklist_service: { kind: host_unit, name: "{{ container_prefix }}-pihole-blocklist.service" }
@@ -83,6 +91,7 @@ storage:
     # exists before Pi-hole starts: dnsmasq only watches a hostsdir it found at startup
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/mullvad-socks", type: dir, required: true, when: mullvad_socks }
     - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/moving", type: dir, required: true, when: moving }
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-pihole/names", type: dir, required: true }
 
 host_integration:
   # Fedora CoreOS / uCore run systemd-resolved's stub on 127.0.0.53:53

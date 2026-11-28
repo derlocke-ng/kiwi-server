@@ -28,6 +28,7 @@ KS_STACK_FILES=('docker-compose.yml:0600' 'kiwi/ca/kiwiCA.crt:0644' 'kn-nginx/fu
 KS_STACK_SERVICES=('kn-vpn-client' 'kn-nginx')
 KS_STACK_URLS=()
 KS_STACK_CHECKS=('kn-nginx|nginx -t')
+KS_STACK_LIVE=()
 KS_STACK_VPN_CONTAINER='kn-vpn-client'
 KS_STACK_VPN_DEPENDENTS=()
 KS_STACK_MESH_SUBNET='10.8.0.0/16'

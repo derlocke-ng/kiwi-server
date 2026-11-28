@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.326.1 — an order's answer at once; two small fixes
+
+- A machine's agent sends what came of an order at once, in a report of its own, instead of
+  with the next minute's: an order took 107 s from asking to its answer on a test machine.
+- **`kiwi-server check`** counted a machine without the VPN that did not answer at all as
+  passed (since 2.325.0): it now says "not reached" and fails.
+- **`kiwi-server remove`** sets the machine's kept secrets aside in the store
+  (`removed/<day>/…` in `secrets/pins.json`) instead of leaving them under its name: a machine
+  added later under that name would have taken them over. They are not deleted: the machine
+  removed may still run with them.
+
 ## 2.326.0 — a machine's agent takes orders
 
 - **Orders for a machine's agent** (docs/control.md): restart, start or stop one of the

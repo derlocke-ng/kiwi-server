@@ -97,6 +97,10 @@ fi
 if [ "$out" = 200 ]; then
     : > "$st/told"                  # it has them
     orders "$resp"
+    # an order ran: what came of it goes at once, not with the next minute's report (once)
+    if [ -s "$st/told" ] && [ -z "${KIWI_AGENT_AGAIN:-}" ]; then
+        case $0 in */kiwi-agent) exec 9>&-; KIWI_AGENT_AGAIN=1 exec "$0" ;; esac
+    fi
 fi
 [ "$out" = "$(cat /run/kiwi-agent.last 2>/dev/null)" ] || { logger -t kiwi-agent "report to $URL: $out"; echo "$out" > /run/kiwi-agent.last; }
 '''

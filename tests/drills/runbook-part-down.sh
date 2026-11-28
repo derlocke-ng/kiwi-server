@@ -43,6 +43,10 @@ line on; check $? "the line for $part is in the fleet file"
 "$KIWI" apply "$fleet" "$m" > apply-on.log 2>&1; check $? "$m applied"
 grep -q "its runbook acts on $c (restart)" apply-on.log; check $? "the apply set up its runbook for $c"
 on "systemctl is-active -q kiwi-runbook.timer"; check $? "its timer runs"
+# the runbook counts its restarts of a container over 24 hours (`tries`): earlier runs of this drill
+# used them up, and the third run of a day saw "left to a person", as it should (28 Nov 2026). The
+# drill's own container starts from no count
+on "rm -f /var/lib/kiwi-server/runbook/$c.tries"
 # failed: killed while systemd's own restart is held off (a runtime drop-in, gone right after)
 drop=/run/systemd/system/$c.service.d
 on "mkdir -p $drop && printf '[Service]\nRestart=no\n' > $drop/kiwi-drill.conf && systemctl daemon-reload && systemctl kill -s KILL $c.service"

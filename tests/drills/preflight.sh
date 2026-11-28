@@ -37,8 +37,13 @@ case ${PART:-proxy} in
     *) echo "PART: proxy or accounts" >&2; exit 2 ;;
 esac
 state() { on "sudo sh -c $(printf '%q' "cat /home/*/docker/$files /var/home/*/docker/$files /etc/containers/systemd/k?-$unit.container 2>/dev/null | sha256sum; systemctl show -p ActiveEnterTimestampMonotonic --value k?-$unit.service")" 2>/dev/null | tr '\n' ' '; }
-work=$(mktemp -d "${TMPDIR:-/tmp}/kiwi-preflight.XXXXXX"); trap 'rm -rf "$work"' EXIT
-cp -a "$(dirname "$(dirname "$ks")")" "$work/bad" 2>/dev/null; rm -rf "$work/bad/.git"
+# the code under test is copied and broken in the copy: KIWI_SERVER must be a checkout's bin/kiwi-server.
+# (Given the installed one, it once copied all of ~/.local into /tmp until that was full: 28 Nov 2026)
+src=$(cd "$(dirname "$ks")/.." 2>/dev/null && pwd)
+[ -f "$src/$template" ] && [ -d "$src/lib/kiwiserver" ] && [ -x "$src/bin/kiwi-server" ] \
+    || { echo "KIWI_SERVER=$ks is not a kiwi-server checkout's bin/kiwi-server: nothing to copy and break" >&2; exit 2; }
+work=$(mktemp -d "${TMPDIR:-/tmp}/kiwi-preflight.XXXXXX"); trap 'chmod -R u+rwX "$work" 2>/dev/null; rm -rf "$work"' EXIT
+cp -a "$src/." "$work/bad" 2>/dev/null; rm -rf "$work/bad/.git"
 echo "$line" >> "$work/bad/$template"
 [ -x "$work/bad/bin/kiwi-server" ]; check $? "a copy of the code with a broken $what template"
 before=$(state); bad=$(sites)

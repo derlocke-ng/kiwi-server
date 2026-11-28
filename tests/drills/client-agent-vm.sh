@@ -33,6 +33,7 @@ trap done_ EXIT
 vh '[ -s bound ]' || { echo "the VM is not installed and bound yet: run desktop-clevis-vm.sh first" >&2; exit 2; }
 admin=$(python3 -c "import yaml; print(yaml.safe_load(open('fleet/fleet.yaml'))['defaults']['admin']['user'])")
 
+vh_prepare; check $? "the VM's folder on ${VMHOST:-this computer}: $VD" || exit 1
 tunnel_up 7611 7612 7613; check $? "the test rings reach ${VMHOST:-the VM}"
 rings health1 health2 auto; vm_start client1.log
 up_within 300; check $? "the desktop VM is up (its disk opened by its rings)" || exit 1

@@ -4865,7 +4865,7 @@ def cmd_client(args):
     """People's computers as clients (docs/design/clients.md): listed in the fleet file, each with an
     agent that reports to the control node."""
     import yaml
-    from . import clientagent
+    from . import clientagent, controlsync
     fleet, _roles, ms = load(args, need_roles=False)
     have = clientagent.names(fleet)
     if args.action == "list":

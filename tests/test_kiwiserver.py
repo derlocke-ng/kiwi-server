@@ -8037,6 +8037,7 @@ class TestManage(Base):
         self.assertIn("not a plain name", self.run_cli("client", "add", f.path, "Desk_1")[2])
         self.assertNotIn("clients", self.run_cli("validate", f.path)[2])     # the block is no mistake of the file
         self.assertIn("where?", self.run_cli("client", "install", f.path, "desk")[2])
+        self.assertIn("join it first", self.run_cli("client", "list", f.path)[2])    # the reports are the control node's
         rc, out, err = self.run_cli("client", "remove", f.path, "pentest-1")
         self.assertEqual(rc, 0, err)
         self.assertEqual(config.Fleet.load(f.path).raw["clients"], {"desk": {}})

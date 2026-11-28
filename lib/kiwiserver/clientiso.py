@@ -110,12 +110,18 @@ systemctl enable kiwi-join-once.service
 
 
 def grub_with_kickstart(text, label):
-    """A Fedora installer's grub.cfg whose entries read the kickstart on the stick, as mkksiso does."""
+    """A Fedora installer's grub.cfg whose entries read the kickstart on the stick, as mkksiso does:
+    no media check (a remastered ISO has no checksum of its own: the check failed and the
+    installer stopped, 28 Nov 2026), and the plain install as the default entry."""
     ks = "inst.ks=hd:LABEL=%s:/ks.cfg" % label.replace(" ", "\\x20")
     out = []
     for line in text.splitlines():
-        if re.match(r"\s*(linux|linuxefi)\s", line) and "inst.stage2=" in line and "inst.ks=" not in line:
-            line = line.rstrip() + " " + ks
+        if re.match(r"\s*(linux|linuxefi)\s", line):
+            line = re.sub(r"\s+rd\.live\.check\b", "", line)
+            if "inst.stage2=" in line and "inst.ks=" not in line:
+                line = line.rstrip() + " " + ks
+        if re.match(r"\s*set\s+default=", line):
+            line = re.sub(r"default=\S+", 'default="0"', line)
         out.append(line)
     return "\n".join(out) + "\n"
 

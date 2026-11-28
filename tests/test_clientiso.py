@@ -53,7 +53,8 @@ class TestClientIso(unittest.TestCase):
         self.assertIn('printf \'%s\\n\' "$s" | sh', clientiso.JOIN_SCRIPT)
 
     def test_the_installers_entries_read_the_kickstart(self):
-        grub = ("menuentry 'Install Fedora 45' --class fedora {\n"
+        grub = ('set default="1"\n'
+                "menuentry 'Install Fedora 45' --class fedora {\n"
                 "\tlinux /images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Fedora-SB-ostree-x86_64-45 quiet\n"
                 "\tinitrd /images/pxeboot/initrd.img\n}\n"
                 "menuentry 'Rescue' {\n\tlinuxefi /images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Fedora-SB-ostree-x86_64-45 inst.rescue\n}\n"
@@ -61,6 +62,8 @@ class TestClientIso(unittest.TestCase):
         out = clientiso.grub_with_kickstart(grub, "Fedora-SB-ostree-x86_64-45")
         self.assertEqual(out.count("inst.ks=hd:LABEL=Fedora-SB-ostree-x86_64-45:/ks.cfg"), 2)
         self.assertIn("linux /boot/memtest\n", out)
+        self.assertNotIn("rd.live.check", clientiso.grub_with_kickstart(grub.replace("quiet", "rd.live.check quiet"), "X"))
+        self.assertTrue(out.startswith('set default="0"\n'))                                 # the install itself
         self.assertEqual(clientiso.grub_with_kickstart(out, "Fedora-SB-ostree-x86_64-45"), out)      # once
         self.assertIn("LABEL=My\\x20Disk:/ks.cfg", clientiso.grub_with_kickstart(grub, "My Disk"))
 

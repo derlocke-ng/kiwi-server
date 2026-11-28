@@ -520,6 +520,14 @@ passphrase on the stick: for test machines only.
   `home`) that comes up by itself. Only the
   network goes through it, and only the network's names are asked there, unless the computer
   was added with everything through the VPN.
+- With [kiwi-killswitch](https://github.com/derlocke-ng/kiwi-killswitch) on the computer (0.3.0
+  or later, `kiwi install kiwi-killswitch`), the kill switch decides what goes through the VPN,
+  in one of the network's modes: `vpn` (everything; the Internet only through the tunnel, or
+  through one of the network's gateways when the computer is on its LAN), `split` (only the
+  network), `dns` (only the network, and every name asked there), `off`. The agent writes
+  `/etc/kiwi-killswitch/network.json` from the profile. `network_modes` in the client's block
+  says which modes its person may pick, `network_mode` the one it starts in; a managed
+  computer has `vpn` only, and its people cannot switch it off.
 - It takes two orders: *Update now* (rpm-ostree or apt) and *Apply its profile*, buttons on the
   Devices page, or `kiwi-server control order fleet.yaml NAME update`. Nothing else, never a
   command.

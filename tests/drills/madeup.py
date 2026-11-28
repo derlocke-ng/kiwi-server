@@ -87,6 +87,18 @@ def devices():
     return out
 
 
+def clients(machine):
+    """Three people's computers and what their agents said: a desktop on its own box, a pentest
+    system on MACHINE's hardware, a laptop that is away. ({name: block}, {name: report}, MACHINE's box)."""
+    box = "5f0c1e9a7b2d4c68"
+    said = {
+        "desk": "box 0d9e8f7a6b5c4d3e\nos Bluefin (Version: 43.20261126)\nhostname desk\nvpn wg0 10.9.0.40/32\ncrypt 1\nclevis 1\nupdates staged\nagent 1\n",
+        "pentest-1": "box %s\nos Kali GNU/Linux Rolling\nhostname kali\nvpn kiwi-pentest 10.9.8.2/32\ncrypt 1\nclevis 0\nupdates 37\nagent 1\n" % box,
+        "laptop": "box 1a2b3c4d5e6f7a8b\nos Debian GNU/Linux 13 (trixie)\nhostname laptop\ncrypt 1\nclevis 1\nupdates 0\nagent 1\n",
+    }
+    return {n: {} for n in said}, said, box
+
+
 def move_plan(part, src, dst):
     """What `move FLEET PART FROM TO --porcelain` says, made up: the plan the Move page shows. A part
     the machine does not have is stopped, as the real plan stops it."""

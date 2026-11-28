@@ -96,7 +96,8 @@ n=24; while [ "$n" -gt 0 ]; do vssh "sudo test -s /var/lib/kiwi-client/profile.s
 [ "$n" -gt 0 ]; check $? "its profile is applied"
 vssh "test -s /usr/local/share/ca-certificates/kiwi-home.crt || test -s /etc/pki/ca-trust/source/anchors/kiwi-home.pem"
 check $? "the network's CA is in the VM's trust store"
-vssh "nmcli -t -f NAME connection show --active | grep -qx kiwi-home"; check $? "its VPN connection kiwi-home is up"
+vssh "nmcli -t -f NAME connection show --active | grep -qx kiwi-home"; rc=$?; check $rc "its VPN connection kiwi-home is up"
+[ $rc = 0 ] || { vssh "nmcli -t -f NAME,TYPE,DEVICE connection show; sudo journalctl -t kiwi-client-agent --no-pager -o cat -n 8" 2>&1 | sed 's/^/          /' | cut -c1-200; }
 mesh=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import config
@@ -125,7 +126,7 @@ if [ "${KIWI_UNLOCK:-1}" = 1 ]; then
 import sys
 from kiwiserver import fleettext, util
 path, name, ring = sys.argv[1:4]
-new = fleettext.put(util.read_text(path), ["clients", name, "unlock"], {"rings": [ring]})
+new = fleettext.put(util.read_text(path), ["clients", name], {"unlock": {"rings": [ring]}})     # its block, written anew
 if not new:
     sys.exit("the fleet file could not be changed in place")
 util.write_text(path, new, 0o600)' "$fleet" "$name" "$ring" && "$KIWI" control push "$fleet" >/dev/null 2>&1

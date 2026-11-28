@@ -2,6 +2,7 @@
 against a stand-in curl, its facts, its signature both sides make, and what the install script
 carries (never the key)."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
                        .replace("/etc/kanidm", self.t + "/sys/kanidm")
                        .replace("/etc/authselect", self.t + "/sys/authselect")
                        .replace("/etc/sudoers.d", self.t + "/sys/sudoers.d")
+                       .replace("/etc/polkit-1", self.t + "/sys/polkit-1")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
         for path in ("/etc/", "/usr/local/share", "/var/lib/"):
             self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
@@ -242,7 +244,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
     SSSD_NSS = "passwd:     files sss systemd\ngroup:      files sss systemd\nnetgroup:   files sss\nsudoers:    files sss\n"
 
     def managed_stubs(self, current="sssd"):
-        for d in ("kanidm", "authselect", "sudoers.d"):
+        for d in ("kanidm", "authselect", "sudoers.d", "polkit-1/rules.d"):
             os.makedirs(os.path.join(self.t, "sys", d), exist_ok=True)
         self.w("auth-current", current + "\n")
         self.w("bin/kanidm_unixd", "exit 0\n", 0o755)
@@ -258,7 +260,8 @@ class TestClientProfileAndOrders(unittest.TestCase):
     def run_managed(self):
         import hashlib
         body = self.profile.decode().replace("network home", "network home\nkind managed\naccounts https://id.quince.home\n"
-                                             "login_groups computers,staff\nadmin_groups admins", 1).encode()
+                                             "login_groups computers,staff\nadmin_groups admins\nlock_software yes\n"
+                                             "apps org.mozilla.firefox,org.libreoffice.LibreOffice", 1).encode()
         self.w("profile", body.decode())
         self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
         self.answer("profile " + hashlib.sha256(body).hexdigest())
@@ -311,10 +314,28 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.run_managed()
         self.assertIn("systemctl reboot", self.read("said"))                  # nobody but the login screen
 
+    def test_a_managed_computer_gets_its_apps_and_only_admins_install(self):
+        self.managed_stubs()
+        self.w("bin/flatpak", 'echo "flatpak $*" >> %s/said\ncase "$1" in info) [ "$3" = org.mozilla.firefox ] ;; esac\n' % self.t, 0o755)
+        self.run_managed()
+        said = self.read("said")
+        self.assertIn("flatpak remote-add --system --if-not-exists flathub", said)
+        self.assertIn("flatpak install --system -y --noninteractive flathub org.libreoffice.LibreOffice", said)
+        self.assertNotIn("install --system -y --noninteractive flathub org.mozilla.firefox", said)     # there already
+        rules = self.read("sys/polkit-1/rules.d/49-kiwi-managed.rules")
+        self.assertIn('!(subject.isInGroup("wheel") || subject.isInGroup("admins"))', rules)
+        self.assertIn('"org.freedesktop.Flatpak."', rules)
+        self.assertIn("return polkit.Result.NO;", rules)
+        r = subprocess.run(["node", "--check", "-"], input=rules, text=True, capture_output=True) if shutil.which("node") else None
+        if r is not None:
+            self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_managed_of_reads_the_block(self):
         self.assertIsNone(clientagent.managed_of({}, "https://id.x"))
         self.assertEqual(clientagent.managed_of({"kind": "managed"}, "https://id.x"),
-                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"]})
+                         {"accounts": "https://id.x", "login": ["computers"], "admins": ["admins"], "apps": [], "lock": True})
+        with self.assertRaisesRegex(KiwiError, "not a Flatpak app id"):
+            clientagent.managed_of({"kind": "managed", "apps": ["firefox; rm -rf /"]}, "https://id.x")
         self.assertEqual(clientagent.managed_of({"kind": "managed", "login_groups": "staff"}, "https://id.x")["login"], ["staff"])
         with self.assertRaisesRegex(KiwiError, "needs the network's accounts"):
             clientagent.managed_of({"kind": "managed"}, None)

@@ -228,6 +228,37 @@ $sudo_rules"
     [ -n "$changed" ] && say "logins with the network's accounts ($idm; groups: ${login:-computers}; sudo: ${admins:-admins})"
     return 0
 }
+software() {    # PROFILE: a managed computer's software: the Flatpaks it has, and who may install
+    local p=$1 apps lock admins rules want a g
+    apps=$(sed -n 's/^apps //p' "$p"); lock=$(sed -n 's/^lock_software //p' "$p"); admins=$(sed -n 's/^admin_groups //p' "$p")
+    if [ -n "$apps" ] && command -v flatpak >/dev/null 2>&1; then
+        flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
+        for a in $(printf '%%s' "$apps" | tr ',' ' '); do
+            flatpak info --system "$a" >/dev/null 2>&1 && continue
+            if flatpak install --system -y --noninteractive flathub "$a" >/dev/null 2>"$err"; then say "$a is on it now (Flathub, for everyone)"
+            else say "$a did not install: $(tail -n 1 "$err" | cut -c1-120)"; fi
+        done
+    fi
+    rules=/etc/polkit-1/rules.d/49-kiwi-managed.rules
+    if [ "$lock" = yes ]; then
+        # only the network's admins (and wheel) install or remove software for the whole computer
+        g=$(printf '%%s' "wheel,${admins:-admins}" | tr ',' '\n' | grep -v '^$' | sed 's/.*/subject.isInGroup("&")/' | paste -sd'|' - | sed 's/|/ || /g')
+        want="// kiwi-server: on this managed computer only the network's admins install or remove software (its profile)
+polkit.addRule(function(action, subject) {
+    var software = action.id.indexOf(\"org.freedesktop.Flatpak.\") == 0 ||
+                   action.id.indexOf(\"org.projectatomic.rpmostree1.\") == 0 ||
+                   action.id.indexOf(\"org.freedesktop.packagekit.\") == 0;
+    if (software && !($g)) {
+        return polkit.Result.NO;
+    }
+});"
+        if [ "$(cat "$rules" 2>/dev/null)" != "$want" ]; then
+            printf '%%s\n' "$want" > "$rules" && chmod 0644 "$rules" && say "only the network's admins install software here now"
+        fi
+    elif [ -f "$rules" ]; then
+        rm -f "$rules"; say "installing software is as the system has it again"
+    fi
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
     local p=$1 ca f upd vpn con mode search tmp
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
@@ -240,7 +271,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         fi
     fi
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
-    [ "$(sed -n 's/^kind //p' "$p")" = managed ] && managed "$p"
+    if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then managed "$p"; software "$p"; fi
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -563,7 +594,13 @@ def managed_of(block, accounts_url):
             if not NAME.match(str(g)):
                 raise KiwiError("%s: %r is not a plain group name" % (key, g))
         return [str(g) for g in got]
-    return {"accounts": accounts_url, "login": groups("login_groups", "computers"), "admins": groups("admin_groups", "admins")}
+    apps = block.get("apps") or []
+    apps = [apps] if isinstance(apps, str) else apps
+    for a in apps:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}", str(a)):
+            raise KiwiError("apps: %r is not a Flatpak app id (like org.mozilla.firefox)" % a)
+    return {"accounts": accounts_url, "login": groups("login_groups", "computers"), "admins": groups("admin_groups", "admins"),
+            "apps": [str(a) for a in apps], "lock": block.get("lock_software", True) is not False}
 
 
 def profile(fleet, name, linked=(), unlock=None, managed=None):
@@ -588,7 +625,9 @@ def profile(fleet, name, linked=(), unlock=None, managed=None):
                   "search " + ",".join(["~" + domain] + ["~" + d for d in sorted(set(linked)) if d and d != domain])]
     if managed:         # a managed computer: logins with the network's accounts, sudo for its admins
         lines += ["kind managed", "accounts " + managed["accounts"], "login_groups " + ",".join(managed["login"]),
-                  "admin_groups " + ",".join(managed["admins"])]
+                  "admin_groups " + ",".join(managed["admins"]), "lock_software " + ("yes" if managed.get("lock", True) else "no")]
+        if managed.get("apps"):
+            lines.append("apps " + ",".join(managed["apps"]))
     if unlock:          # its disk's policy (unlock_tree): kept bound by the agent once a person bound it
         import json
         lines.append("unlock " + base64.b64encode(json.dumps(unlock, sort_keys=True, separators=(",", ":")).encode()).decode())

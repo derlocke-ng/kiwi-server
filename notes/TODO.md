@@ -146,6 +146,20 @@ L: days. New ideas go to the end of their section.
   image sets the password `password` when none is given (said in docs/roles.md; the catalog
   cannot say "none"). ~~Satisfactory's game files lay inside its backed-up folder~~ (kiwi-modules
   0.133.0). S each
+- Found in the machines' logs of a day (28 Nov 2026), not touched: on the uCore machines
+  setroubleshoot fails on every SELinux denial ("failed to load catchall_boolean plugin: No
+  module named 'six'", 15,000 lines a day on quince and papaya), and the denials behind it are
+  the image's own (pmdaproc, coreos-sshd-gen). On Debian every reload of systemd logs two error
+  lines of systemd-ssh-generator (no AF_VSOCK in a VM). A quieter base for both would be a
+  change to the system, the owner's choice. S
+- Health checks, what is left after 2.318.0 to 2.320.0: `Notify=healthy` in the quadlets would
+  let podman's own update go back to the old image when the new one turns unhealthy, but a
+  restart then waits for the first check (it needs a start-up check of its own and the boot
+  order drilled). A node's VPN client has none: gluetun's own asks the Internet through the
+  master, and one fault there would name every node (the status says one shared fact once). M
+- The local AI, loading the chosen model by itself after a start (above): Studio's API key
+  would have to lie on the machine, or the control node loads it when the machine reports in.
+  Which of the two is the owner's choice (secrets at rest). M
 
 ## 3. Dropped on 22 November 2026
 

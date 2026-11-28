@@ -291,7 +291,7 @@ killswitch() {  # POLICY: kiwi-killswitch's network file (the modes, the network
     say "the kill switch's network policy is in place$([ -x /usr/local/sbin/kiwi-killswitchd ] || echo ' (kiwi-killswitch is not installed: kiwi install kiwi-killswitch)')"
 }
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
-    local p=$1 ca f upd vpn con mode search tmp
+    local p=$1 ca f upd vpn con mode search tmp ks
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
     if [ -n "$ca" ]; then
         if [ -d /etc/pki/ca-trust/source/anchors ]; then f=/etc/pki/ca-trust/source/anchors/kiwi-$NETWORK.pem; upd=update-ca-trust
@@ -312,18 +312,22 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     fi
     command -v nmcli >/dev/null 2>&1 || { say "no NetworkManager here: the profile's VPN is not set up"; return 1; }
     mode=$(sed -n 's/^vpn_mode //p' "$p"); search=$(sed -n 's/^search //p' "$p")
-    if [ "$(printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1)" != "$(cat "$st/vpn.sum" 2>/dev/null)" ] || ! nmcli -t -f NAME connection show | grep -qx "$con"; then
+    # with kiwi-killswitch and the network's policy, the tunnel takes everything and the kill switch
+    # decides what goes into it (its modes): a config for the network only would leave its `vpn` mode no way out
+    ks=; [ -x /usr/local/sbin/kiwi-killswitchd ] && [ -s /etc/kiwi-killswitch/network.json ] && ks=all
+    if [ "$(printf '%%s%%s' "$vpn" "$ks" | sha256sum | cut -d' ' -f1)" != "$(cat "$st/vpn.sum" 2>/dev/null)" ] || ! nmcli -t -f NAME connection show | grep -qx "$con"; then
         tmp=$(mktemp -d /run/kiwi-client.XXXXXX) || return 1       # nmcli names the connection after the file; in memory only
         printf '%%s' "$vpn" | base64 -d > "$tmp/$con.conf" && chmod 0600 "$tmp/$con.conf"
+        [ -n "$ks" ] && sed -i 's|^[[:space:]]*AllowedIPs[[:space:]]*=.*|AllowedIPs = 0.0.0.0/0|' "$tmp/$con.conf"
         nmcli connection delete "$con" >/dev/null 2>&1
         if ! nmcli connection import type wireguard file "$tmp/$con.conf" >/dev/null 2>"$err"; then
             say "its VPN connection could not be made: $(tr '\n' ' ' < "$err" | cut -c1-160)"; rm -rf "$tmp"; return 1
         fi
         rm -rf "$tmp"
-        printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
+        printf '%%s%%s' "$vpn" "$ks" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
         say "its VPN connection $con is made"
     fi
-    if [ -x /usr/local/sbin/kiwi-killswitchd ] && [ -s /etc/kiwi-killswitch/network.json ]; then
+    if [ -n "$ks" ]; then
         :   # kiwi-killswitch owns the connection's routing: the mode its person or the network chose
     elif [ "$mode" = full ]; then     # everything through the VPN, every name asked there
         nmcli connection modify "$con" ipv4.never-default no ipv4.dns-search "~." ipv6.method disabled connection.autoconnect yes

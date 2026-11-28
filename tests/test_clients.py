@@ -399,6 +399,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.assertEqual(oct(os.stat(os.path.join(self.t, "sys", "kiwi-killswitch", "network.json")).st_mode & 0o777), "0o644")
         self.assertNotIn("ipv4.never-default", self.read("nm"))            # the agent leaves the routing to it
         self.assertIn("connection up kiwi-home", self.read("nm"))
+        self.assertIn("AllowedIPs = 0.0.0.0/0\n", self.read("imported"))  # the tunnel takes all; its modes pick
 
     def test_managed_of_reads_the_block(self):
         self.assertIsNone(clientagent.managed_of({}, "https://id.x"))

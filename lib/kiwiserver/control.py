@@ -2354,7 +2354,21 @@ class Control:
         """The fleet's clients with their last report, and the machine whose box each one runs on."""
         from . import clientagent, config
         fleet = config.Fleet.load(self.fleet_path)
-        return clientagent.rows(self.reports_dir, clientagent.names(fleet), now=self.clock())
+        return clientagent.rows(self.reports_dir, clientagent.names(fleet), boxes=self._boxes(fleet), now=self.clock())
+
+    def _boxes(self, fleet):
+        """{the sum of a box: the machine of the fleet that runs on it}, from each machine's last report,
+        however old: a pentest SSD booted on the workstation is on lemonaide's box while lemonaide is off."""
+        out = {}
+        for name in fleet.hosts:
+            try:
+                text = util.read_text(os.path.join(self.reports_dir, name + ".txt"))
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.startswith("box="):
+                    out[line[4:].strip()] = name
+        return out
 
     # ---- orders for the machines' agents (docs/design/scale.md, "Takes orders") ----------------
     # A person asks (POST /api/orders); the machine's agent gets the order with the answer to its

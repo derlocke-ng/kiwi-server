@@ -16169,7 +16169,14 @@ class TestFirstRunPage(StoreBase):
         self.assertEqual(status, 401)                                         # the list needs a login
         status, text, _ = self.ask("/api/clients", cookie=cookie)
         got = json.loads(text)["clients"]
-        self.assertEqual([(r["name"], r["state"], r["facts"].get("os")) for r in got], [("pentest-1", "on", "Kali GNU/Linux Rolling")])
+        self.assertEqual([(r["name"], r["state"], r["facts"].get("os"), r["box_of"]) for r in got],
+                         [("pentest-1", "on", "Kali GNU/Linux Rolling", None)])
+        # a machine of the fleet reported the same box once, and is off now: the SSD runs on its hardware
+        machine = sorted(fleet.hosts)[0]
+        os.makedirs(self.c.reports_dir, exist_ok=True)
+        util.write_text(os.path.join(self.c.reports_dir, machine + ".txt"), "now=1\nbox=0123456789abcdef\nos=uCore\n", 0o600)
+        got = json.loads(self.ask("/api/clients", cookie=cookie)[1])["clients"]
+        self.assertEqual(got[0]["box_of"], machine)
 
     def test_a_machine_reports_and_is_looked_at_without_a_login(self):
         """The agent (docs/design/scale.md): a machine's signed report is its state for the look, and

@@ -125,6 +125,9 @@ NAME=%(name)s
 KIWI_EOF
 cat > %(dir)s/ca.pem <<'KIWI_EOF'
 %(ca)sKIWI_EOF
+cat > %(dir)s/salt <<'KIWI_EOF'
+%(salt)s
+KIWI_EOF
 cat > %(dir)s/facts.sh <<'KIWI_FACTS_EOF'
 %(facts)s
 KIWI_FACTS_EOF
@@ -241,7 +244,9 @@ def after_apply(fleet, host, tgt, ms, runner=None):
         if not where:                   # a network without a control node: nobody to report to, nothing is asked
             return                      # of the machine (an agent left from before logs once that nobody answers)
         ca = util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem"))
+        from . import clientagent
         script = INSTALL % {"dir": DIR, "url": where, "name": host.name, "ca": ca if ca.endswith("\n") else ca + "\n",
+                            "salt": clientagent.salt(fleet),
                             "facts": facts.SCRIPT, "path": SCRIPT_PATH, "script": SCRIPT, "unit": UNIT,
                             "service": SERVICE, "timer": TIMER, "last": LAST_SERVICE}
         run(tgt, script, key(fleet, host).encode())

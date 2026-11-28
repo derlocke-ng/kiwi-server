@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.322.0 — a Debian machine no longer fetches its package lists with every apply
+
+- Every apply of a Debian machine fetched the package lists again (`apt-get update`), with
+  nothing to install: 18 of an apply's 43 seconds on a Rock Pi E. Now once a day; a first
+  apply and any install of a missing package fetch them as before (kiwi-stack 0.9.44). An
+  apply that changes nothing on the Rock Pi E: 67 s on 2.320.0, 43 s on 2.321.0, 24 s now.
+
 ## 2.321.0 — an apply that changes nothing is a third faster again
 
 - An apply made systemd read all its units again seventeen times, changed or not: once for

@@ -643,27 +643,33 @@ def managed_of(block, accounts_url):
             "dconf": dconf_files(block)}
 
 
-MODES = ("vpn", "split", "dns", "off")      # kiwi-killswitch's, with the network's file (docs/design/clients.md)
+# kiwi-killswitch's modes with the network's file (docs/design/clients.md): `full` everything through
+# the VPN, names too; `network` only the network and its names, the rest the computer's own way; `off`
+MODES = ("full", "network", "off")
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
 
 def killswitch_policy(network, conn, block, conf_text, gateways, domains):
     """kiwi-killswitch's /etc/kiwi-killswitch/network.json for a client with a place on the VPN: the
-    modes it may use and its default (`network_modes`, `network_mode` in its block; a managed one is
-    fixed), the network's gateways that stand in for the VPN on their LAN ([{name, ip, macs}]), its
-    resolvers and VPN subnets as its VPN config names them. None without a VPN config."""
+    modes it may use and its default (`killswitch_modes`, `killswitch_mode` in its block; a managed
+    one is fixed to `full`), the network's gateways that stand in for the VPN on their LAN
+    ([{name, ip, macs}]), its resolvers and VPN subnets as its VPN config names them. None without
+    a VPN config."""
     import ipaddress
     if not conf_text:
         return None
-    managed = str((block or {}).get("kind") or "") == "managed"
-    modes = block.get("network_modes") or (["vpn"] if managed else list(MODES))
+    block = block or {}
+    managed = str(block.get("kind") or "") == "managed"
+    modes = block.get("killswitch_modes") or (["full"] if managed else list(MODES))
     modes = [modes] if isinstance(modes, str) else [str(m) for m in modes]
     if not modes or any(m not in MODES for m in modes):
-        raise KiwiError("network_modes: some of %s" % ", ".join(MODES))
+        raise KiwiError("killswitch_modes: some of %s" % ", ".join(MODES))
     modes = [m for m in MODES if m in modes]
-    default = str(block.get("network_mode") or ("vpn" if managed or "split" not in modes else "split"))
+    full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in conf_text.splitlines())
+    start = "full" if managed or full else "network"        # a client added with --full starts with everything
+    default = str(block.get("killswitch_mode") or (start if start in modes else modes[0]))
     if default not in modes:
-        raise KiwiError("network_mode %s is not one of network_modes (%s)" % (default, ", ".join(modes)))
+        raise KiwiError("killswitch_mode %s is not one of killswitch_modes (%s)" % (default, ", ".join(modes)))
     dns, mesh, address = [], [], None
     for line in conf_text.splitlines():
         key, _eq, value = line.partition("=")

@@ -357,19 +357,22 @@ class TestClientProfileAndOrders(unittest.TestCase):
 
     def test_the_kill_switch_policy(self):
         conf = "[Interface]\nAddress = 10.9.0.40/32\nDNS = 10.9.0.1\n[Peer]\nAllowedIPs = 10.9.0.0/16, 10.20.0.0/16\n"
-        gws = [{"name": "the moving address 192.168.2.69", "ip": "192.168.2.69", "macs": ["aa:bb:cc:dd:ee:01"]}]
+        gws = [{"name": "lime or papaya", "ip": "192.168.2.69", "macs": ["aa:bb:cc:dd:ee:01"]}]
         p = clientagent.killswitch_policy("home", "kiwi-home", {}, conf, gws, ["home"])
-        self.assertEqual(p, {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["vpn", "split", "dns", "off"],
-                             "default": "split", "locked": False, "gateways": gws, "dns": ["10.9.0.1"],
+        self.assertEqual(p, {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["full", "network", "off"],
+                             "default": "network", "locked": False, "gateways": gws, "dns": ["10.9.0.1"],
                              "mesh": ["10.9.0.0/16", "10.20.0.0/16"], "domains": ["home"]})
-        m = clientagent.killswitch_policy("home", "kiwi-home", {"kind": "managed"}, conf.replace("10.9.0.0/16, 10.20.0.0/16", "0.0.0.0/0"), [], ["home"])
-        self.assertEqual((m["modes"], m["default"], m["locked"], m["mesh"]), (["vpn"], "vpn", True, ["10.9.0.0/16"]))
-        self.assertEqual(clientagent.killswitch_policy("h", "k", {"network_modes": ["off", "vpn"], "network_mode": "off"}, conf, [], [])["modes"],
-                         ["vpn", "off"])
-        with self.assertRaisesRegex(KiwiError, "not one of network_modes"):
-            clientagent.killswitch_policy("h", "k", {"network_modes": ["vpn"], "network_mode": "off"}, conf, [], [])
-        with self.assertRaisesRegex(KiwiError, "network_modes"):
-            clientagent.killswitch_policy("h", "k", {"network_modes": ["tor"]}, conf, [], [])
+        full = conf.replace("10.9.0.0/16, 10.20.0.0/16", "0.0.0.0/0")
+        self.assertEqual(clientagent.killswitch_policy("h", "k", {}, full, [], [])["default"], "full")      # added with --full
+        m = clientagent.killswitch_policy("home", "kiwi-home", {"kind": "managed"}, full, [], ["home"])
+        self.assertEqual((m["modes"], m["default"], m["locked"], m["mesh"]), (["full"], "full", True, ["10.9.0.0/16"]))
+        got = clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["off", "network"]}, conf, [], [])
+        self.assertEqual((got["modes"], got["default"]), (["network", "off"], "network"))
+        self.assertEqual(clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["off"]}, conf, [], [])["default"], "off")
+        with self.assertRaisesRegex(KiwiError, "not one of killswitch_modes"):
+            clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["full"], "killswitch_mode": "off"}, conf, [], [])
+        with self.assertRaisesRegex(KiwiError, "killswitch_modes"):
+            clientagent.killswitch_policy("h", "k", {"killswitch_modes": ["split"]}, conf, [], [])
         self.assertIsNone(clientagent.killswitch_policy("h", "k", {}, "", [], []))
 
     def test_the_networks_gateways_with_every_mac_of_the_moving_address(self):
@@ -387,7 +390,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
         import base64
         import hashlib
         import json
-        policy = {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["vpn", "split"], "default": "split"}
+        policy = {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["full", "network"], "default": "network"}
         body = self.profile.decode().replace("network home", "network home\nkillswitch " +
                                               base64.b64encode(json.dumps(policy).encode()).decode(), 1).encode()
         self.w("profile", body.decode())

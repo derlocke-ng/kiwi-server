@@ -421,11 +421,12 @@ the box: the same SSD booted on two machines is one client on two boxes. The
 
 **Add one on the control page:** Devices, *Add a computer*. Give it a name, and leave *A place on
 the VPN* ticked for a computer that goes out of the house. A pentest system belongs in a VPN
-group of its own, which reaches the Internet and nothing at home. The page shows one command.
-Run it in a terminal on that computer, at home or on the VPN. It asks for the computer's password
-(`sudo`) and puts the agent on it. The command works once, within a day, and carries the
-network's CA, so the computer checks that it talks to your control node. kiwi-server need not be
-on the computer.
+group of its own, which reaches the Internet and nothing at home. The page shows a short link:
+paste it into *Kiwi Agent* on the computer (`kiwi install kiwi-agent`, *Join a Network…*). The app
+fetches the network's CA from the control page, checks it against the SHA-256 in the link, and
+only then fetches the agent with it; polkit asks for the computer's password. Beside the link the
+page shows a command that does the same in a terminal, without the app. Both work once, within a
+day. kiwi-server need not be on the computer.
 
 **Or from this computer:**
 
@@ -436,7 +437,7 @@ kiwi-server client install fleet.yaml desk --here
 ```
 
 `--vpn` gives it its place on the VPN (`--group` its group; `--full` sends everything through the
-VPN, not only the network). `install --here` puts the agent on this computer (`sudo` asks for
+VPN, not only the network). `client invite --link` prints the short link instead of the command. `install --here` puts the agent on this computer (`sudo` asks for
 your password); `--ssh USER@ADDRESS` puts it on another one. `client invite fleet.yaml NAME` prints
 the one-time command, as the page shows it. `client list` shows the clients with their last
 report. `client remove` takes a client out of the fleet file and off the VPN.

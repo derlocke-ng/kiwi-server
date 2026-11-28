@@ -81,7 +81,8 @@ def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en
         key = admin_key.strip()
         if "\n" in key or not re.match(r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+( [^\"]*)?$", key):
             raise KiwiError("--admin-key holds no SSH public key")
-        admin = ('user --name=kiwi --groups=wheel --lock --gecos="kiwi-server: the IT department\'s access"\n'
+        # (no colon in the comment: it is /etc/passwd's field separator, useradd stops with status 3)
+        admin = ('user --name=kiwi --groups=wheel --lock --gecos="IT department access (kiwi-server)"\n'
                  'sshkey --username=kiwi "%s"\n' % key)
     secret = ""
     if passphrase is not None:

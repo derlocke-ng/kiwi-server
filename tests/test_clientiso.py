@@ -35,6 +35,8 @@ class TestClientIso(unittest.TestCase):
         managed = clientiso.kickstart("desk", clientiso.image("bluefin"), URL, CA, managed=True,
                                       admin_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN it@company")
         self.assertIn('user --name=kiwi --groups=wheel --lock', managed)
+        gecos = managed.split('--gecos="', 1)[1].split('"', 1)[0]
+        self.assertNotIn(":", gecos)                # /etc/passwd's separator: the installer stopped on it
         self.assertIn('sshkey --username=kiwi "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN it@company"', managed)
         self.assertIn("systemctl enable sshd.service", managed)
         self.assertIn("printf 'kiwi ALL=(ALL) NOPASSWD: ALL\\n' > /etc/sudoers.d/kiwi-it", managed)

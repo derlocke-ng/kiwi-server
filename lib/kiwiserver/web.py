@@ -1029,8 +1029,8 @@ computer is. A computer is its installed system: a system on a portable disk sho
 <input type="hidden" name="name" value="{{ c.name }}"><button title="Its system's update, now: rpm-ostree or apt. A new system image counts from its next start">Update now</button></form>
 <form class="inline" method="post" action="/devices/computer-profile">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
 <button title="The network's CA and its VPN connection, set up again as the network says">Apply its profile</button></form>{% endif %}
-{% if c.state == "never" %}<form class="inline" method="post" action="/devices/computer-join">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
-<button title="It has not reported yet: a new one-time command that puts the agent on it">Join command</button></form>{% endif %}</td></tr>
+<form class="inline" method="post" action="/devices/computer-join">{{ tok }}<input type="hidden" name="name" value="{{ c.name }}">
+<button title="A new one-time command that puts the agent on it: for one that has not joined, or whose agent is too old to renew itself">Join command</button></form></td></tr>
 {% endfor %}</tbody></table></div>
 <p class="muted small">A computer joins with <code>kiwi-server client add</code> and <code>client install</code> (docs: Machines, "People's computers").</p>{% endif %}
 <details><summary>Lost device</summary><p class="muted">Remove it here. From that moment it cannot reach

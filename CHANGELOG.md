@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.331.0 — the app on a person's computer, and its disk opened by the rings
+
+- **Kiwi Network** (`kiwi-desktop`), a small app on a client computer, installed with kiwi-server's
+  app: whether the network hears from the computer, its VPN connection with a switch, its disk,
+  its updates; *Join a network…* (paste the command from the page), *Bind…*, *Update now*,
+  *Leave…*, as root through polkit. It reads `/run/kiwi-client/status`, which the agent writes
+  every minute without a secret in it. Tried under Broadway with a made-up status.
+- **A computer's disk** (`unlock:` in its block under `clients:`, as a machine's: `rings`,
+  `threshold`, `switch`) opens by the network's rings. The person binds it once at the
+  computer (`sudo kiwi-client-agent bind`, or *Bind…* in the app: clevis and its boot-system
+  part go on, the boot system gets the network, the passphrase is asked); from then on the
+  agent keeps the binding as the network says without the passphrase, and unbinds it when
+  `unlock:` goes. `kiwi-server client policy FLEET NAME` shows the policy.
+- **`sudo kiwi-client-agent leave`** takes away what the agent put on the computer: its VPN
+  connection (only the one it made), the network's CA, the disk's binding, the agent.
+  `client remove` no longer needs `--ssh` for that.
+- **The agent renews itself**: its profile names the newest agent; a newer one is fetched,
+  checked against its signature and installed. An agent of 2.330 cannot: its computer's *Join
+  command* on the Devices page (now always there) puts the new one on it.
+- Not drilled on a machine yet: the binding of a real disk, the renewal, the app's root actions.
+  Tested against stand-ins (clevis, nmcli, the trust store, pkexec, curl).
+
 ## 2.330.1 — three fixes from the first rollout and drill of 2.330.0
 
 - **`apply --careful`**: a site of the network that does not answer through a master before its

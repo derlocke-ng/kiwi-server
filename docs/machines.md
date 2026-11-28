@@ -191,6 +191,12 @@ name while they run. Only the reverse proxy restarts, because its configuration 
 `kiwi-server plan` says how many containers take new names (on Podman; with Docker a container
 whose names changed is still created anew).
 
+**Nor in DNS.** The fleet's names reach Pi-hole as a file it reads again by itself, within a
+second of the apply. A new or removed site restarts no Pi-hole, on no machine of the network.
+`kiwi-server plan` marks such a file "read again while running". The first apply with 2.328.0
+restarts Pi-hole once, because its settings change. Pi-hole's admin page no longer lists these
+names under "Local DNS records".
+
 **One login per machine.** An apply makes some twenty calls to a machine after its role; they share
 one SSH connection, kept two minutes (a login is most of a call's second). A check whether a
 machine answers, its boot system and a test of a new key log in on their own.

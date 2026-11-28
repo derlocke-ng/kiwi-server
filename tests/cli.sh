@@ -53,7 +53,7 @@ test -f output/m1/m1.stack/kiwi/gw.sh
 test -f secrets/ca/kiwiCA.pem
 grep -q 'KS_FILES\[ca_cert\]' output/lab1/lab1.role.sh
 grep -q "KS_ROLE_VPN_IP='10.8.0.6'" output/m1/m1.role.sh        # from the WireGuard config's Address
-grep -q 'FTLCONF_dns_hosts=.*10.8.0.25 cloud.sh3.home' output/m1/m1.stack/docker-compose.yml
+grep -qx '10.8.0.25 cloud.sh3.home' output/m1/m1.stack/kn-pihole/names/kiwi.hosts       # a file Pi-hole reads by itself
 grep -q 'set $backend http://nextcloud-aio-apache:11000;' output/sh3/sh3.stack/kn-nginx/nginx.conf
 test ! -e output/m1/m1.stack/kn-sftp        # a gateway has no SFTP (nor downloads) since 2.306.2
 "$ks" script fleet.yaml sh3 --offline 2>/dev/null | head -1 | grep -q '^#!/usr/bin/env bash$'   # nothing but the script on stdout

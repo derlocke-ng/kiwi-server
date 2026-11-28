@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.328.0 — a new site no longer restarts Pi-hole
+
+- **DNS**: the fleet's names reach Pi-hole as a hosts file it reads again by itself
+  (kiwi-modules 0.140.0): a new or removed site rewrites the file, and the running Pi-hole
+  answers for the new name within a second. Before, the names were one of Pi-hole's variables,
+  and each such change restarted Pi-hole on every DNS machine of the network at once: on 28 Nov
+  the rollout that took mulberry's names away restarted four of them. kiwi-stack 0.9.46 knows
+  files a part reads by itself (a module's `live` output) and restarts nothing for them;
+  `kiwi-server plan` marks them "read again while running". The first apply with this release
+  restarts each Pi-hole once, for its new settings; the old variable's names go with it.
+  Drilled: `tests/drills/dns-names-live.sh` (a name added and taken away on lime; Pi-hole
+  answered and forgot it, from the same start through both applies; no DNS miss on the moving
+  address or on lime while its first apply restarted Pi-hole).
+
 ## 2.327.1 — a careful apply waits for the network after a master
 
 - **`apply --careful`**: after a master it also asks every site of the network, from the

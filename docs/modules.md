@@ -87,6 +87,9 @@ outputs:                         # where rendered templates and file settings la
   wireguard_config: { path: "{{ container_prefix }}-vpn-client/wg0.conf", mode: 0600 }
   refresh_timer: { kind: host_unit, name: "{{ container_prefix }}-x.timer", when: x_enabled }
                                  # when: only rendered while that context value is truthy
+  names: { path: "{{ container_prefix }}-pihole/names/kiwi.hosts", live: true }
+                                 # live: the running part reads the file again by itself, so a
+                                 # change restarts nothing (dnsmasq's hostsdir, for example)
 
 storage:
   volumes: [portainer_data]      # named volumes (the compose fragment may declare them too)

@@ -2201,7 +2201,7 @@ class TestModules(Base):
         self.assertEqual(svcs["kn-dns-up"]["network_mode"], "service:kn-pihole")
         core = b.files["kn-pihole/Corefile"][0]
         self.assertIn("forward . 10.8.0.1 tls://1.1.1.1 tls://1.0.0.1 {", core if isinstance(core, str) else core.decode())
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", svcs["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/kiwi-names", svcs["kn-pihole"]["environment"])
         self.assertEqual((b.mesh_via, b.mesh_subnet), ("172.128.0.2", "10.8.0.0/16"))
         self.assertIn(("127.0.0.1", "m1.kiwi"), b.hosts)      # its own names point at itself
         self.assertIn(("10.8.0.25", "cloud.sh3.kiwi"), b.hosts)
@@ -2227,8 +2227,9 @@ class TestModules(Base):
         self.assertEqual(b.sysctl, {"net.ipv4.ip_forward": "1"})
         post = b.files["kn-vpn-client/post-rules.txt"][0]
         self.assertIn("--dport 2224 -j DNAT --to-destination 172.128.0.251:22", post)
-        hosts = [e for e in svcs["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
-        self.assertIn("10.8.0.25 cloud.sh3.kiwi;", hosts)    # pihole.toml dns.hosts, not custom.list
+        hosts = b.files["kn-pihole/names/kiwi.hosts"][0]
+        self.assertIn("\n10.8.0.25 cloud.sh3.kiwi\n", hosts)    # a hosts file dnsmasq watches, not custom.list
+        self.assertIn("kn-pihole/names/kiwi.hosts", b.live)      # a new name restarts no Pi-hole
         self.assertNotIn("kn-pihole/etc-pihole/hosts/custom.list", b.files)
         self.assertEqual(b.vpn_dependents, ["kn-transmission", "kn-jdownloader"])
         jd = svcs["kn-jdownloader"]["environment"]
@@ -2282,7 +2283,7 @@ class TestModules(Base):
         self.assertIn("51820:51820/udp", svcs["km-vpn-server"]["ports"])
         # the master resolves through its exit tunnel and is the authority for the fleet's names
         self.assertIn("FTLCONF_dns_upstreams=172.64.0.2;1.1.1.1;1.0.0.1", svcs["km-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/kiwi-names;hostsdir=/etc/mullvad-socks",
                       svcs["km-pihole"]["environment"])
         self.assertEqual(b.mesh_via, "172.64.0.3")
         self.assertIn("DNS_UPSTREAM_RESOLVERS=cloudflare", svcs["km-vpn-client"]["environment"])     # one that answers every name
@@ -2480,7 +2481,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         self.assertNotIn("8080:80/tcp", b.compose["services"]["kn-pihole"]["ports"])
         self.assertIn("FTLCONF_dns_upstreams=172.128.0.2;1.1.1.1;1.0.0.1", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/kiwi-names", b.compose["services"]["kn-pihole"]["environment"])
         self.assertNotIn("kn-nginx", b.compose["services"])
 
     def test_bridge_and_tunnel_mtus_are_two_settings(self):
@@ -2621,7 +2622,7 @@ class TestModules(Base):
         b = modmod.Renderer(self.ms).render(spec)
         env = b.compose["services"]["km-pihole"]["environment"]
         # dnsmasq watches the directory and reloads the file by itself
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks", env)
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/kiwi-names;hostsdir=/etc/mullvad-socks", env)
         vols = b.compose["services"]["km-pihole"]["volumes"]
         # root writes there: read-only for the container, outside its writable /etc/dnsmasq.d
         self.assertIn("/home/user/docker/km-pihole/mullvad-socks:/etc/mullvad-socks:ro,z", vols)
@@ -2652,7 +2653,7 @@ class TestModules(Base):
     def test_mullvad_socks_records_are_opt_in_elsewhere(self):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": self.node_gw()})
         b = modmod.Renderer(self.ms).render(spec)
-        self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["kn-pihole"]["environment"]))
+        self.assertNotIn("hostsdir=/etc/mullvad-socks", "\n".join(b.compose["services"]["kn-pihole"]["environment"]))
         self.assertNotIn("mullvad", "\n".join(b.compose["services"]["kn-pihole"]["volumes"]))
         self.assertNotIn("kiwi/mullvad-socks.sh", b.files)
         self.assertEqual(sorted(b.units), ["kn-gateway.service", "kn-pihole-blocklist.service", "kn-pihole-blocklist.timer"])
@@ -2661,7 +2662,7 @@ class TestModules(Base):
         m["dns"]["mullvad_socks"] = False
         host, role, spec = self.spec("gate", role="master", **{"master": m})
         b = modmod.Renderer(self.ms).render(spec)
-        self.assertNotIn("hostsdir", "\n".join(b.compose["services"]["km-pihole"]["environment"]))
+        self.assertNotIn("hostsdir=/etc/mullvad-socks", "\n".join(b.compose["services"]["km-pihole"]["environment"]))
         self.assertNotIn("mullvad", "\n".join(b.compose["services"]["km-pihole"]["volumes"]))
         self.assertEqual(sorted(b.units), ["km-pihole-blocklist.service", "km-pihole-blocklist.timer",
                                            "kn-fail2ban-own.service", "kn-fail2ban-own.timer", "kn-sshd-log.service"])          # the blocklist's, and fail2ban's from the master preset
@@ -2672,7 +2673,7 @@ class TestModules(Base):
         host, role, spec = self.spec("m1", role="node-gw", **{"node-gw": node})
         b = modmod.Renderer(self.ms).render(spec)
         self.assertIn("kn-mullvad-socks.timer", b.units)
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/mullvad-socks",
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/kiwi-names;hostsdir=/etc/mullvad-socks",
                       b.compose["services"]["kn-pihole"]["environment"])
 
     def test_mullvad_socks_settings_are_checked(self):
@@ -2716,7 +2717,7 @@ class TestModules(Base):
         host, role, spec = self.spec("gate", role="master", **{"master": m})
         env = modmod.Renderer(self.ms).render(spec).compose["services"]["km-pihole"]["environment"]
         lines = [e for e in env if e.upper().startswith("FTLCONF_MISC_DNSMASQ_LINES=")]
-        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/mullvad-socks;"
+        self.assertEqual(lines, ["FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;local=/kiwi/;hostsdir=/etc/kiwi-names;hostsdir=/etc/mullvad-socks;"
                                  "rebind-domain-ok=example.org;address=/x.lan/192.168.1.5"])
         self.assertIn("FTLCONF_dns_domainNeeded=true", env)
 
@@ -6344,6 +6345,26 @@ class TestPlan(unittest.TestCase):
         have = dict(want, **{planmod.CLI: "older"})                     # a new kiwi-stack: the tool changes, nothing restarts
         x = planmod.compare(B, want, have, B.services)
         self.assertEqual((x["changed"], x["restart"]), ([{"path": "/usr/local/bin/kiwi-stack", "new": False}], []))
+
+    def test_a_file_its_part_reads_by_itself_restarts_nothing(self):
+        """The DNS names (kiwi-modules 0.140.0): a hosts file in a folder Pi-hole mounts and dnsmasq
+        watches. A new site changes it; the plan says so and counts no restart, as kiwi-stack does."""
+        class B:
+            files = {"kn-pihole/names/kiwi.hosts": ("10.9.0.7 new.home\n", 0o644), "kn-pihole/Corefile": ("c", 0o644)}
+            live = {"kn-pihole/names/kiwi.hosts"}
+            quadlets = {"kn-pihole.container": "[Container]\nVolume=/d/kn-pihole/names:/etc/kiwi-names:ro,z\n"
+                                               "Volume=/d/kn-pihole/Corefile:/Corefile:ro\n"}
+            units = {}
+            services = ["kn-pihole"]
+
+        class H:
+            role_settings = {"docker_dir": "/d"}
+        want = planmod.wanted(H, B)
+        have = dict(want, **{"/d/kn-pihole/names/kiwi.hosts": "old"})
+        x = planmod.compare(B, want, have, B.services, planmod.live(H, B))
+        self.assertEqual((x["changed"], x["restart"]), ([{"path": "/d/kn-pihole/names/kiwi.hosts", "new": False, "live": True}], []))
+        have["/d/kn-pihole/Corefile"] = "old"                                 # another file it mounts: it restarts
+        self.assertEqual(planmod.compare(B, want, have, B.services, planmod.live(H, B))["restart"], ["kn-pihole"])
 
     def test_a_container_whose_quadlet_changed_only_in_its_names_goes_on_running(self):
         """A new site gives every container of the machine one more name (AddHost). kiwi-stack hands
@@ -10605,11 +10626,11 @@ class TestCli(Base):
         self.assertIn("KS_STACK_NO_RESOLVED_STUB=1", m1)
         # the master's address comes from the fleet's master host: DNS upstream (through the resolver in front), forward, hosts block
         self.assertIn("FTLCONF_dns_upstreams=127.0.0.1#5335", b.compose["services"]["kn-pihole"]["environment"])
-        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1", b.compose["services"]["kn-pihole"]["environment"])
+        self.assertIn("FTLCONF_misc_dnsmasq_lines=strict-order;no-hosts;server=/kiwi/10.8.0.1;hostsdir=/etc/kiwi-names", b.compose["services"]["kn-pihole"]["environment"])
         self.assertIn("'10.8.0.1 gate.kiwi'", m1)
         self.assertIn("'127.0.0.1 m1.kiwi'", m1)
         self.assertIn("'10.8.0.25 cloud.sh3.kiwi'", m1)
-        hosts = [e for e in b.compose["services"]["kn-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts=")][0]
+        hosts = b.files["kn-pihole/names/kiwi.hosts"][0]
         self.assertIn("10.8.0.25 cloud.sh3.kiwi", hosts)
         self.assertIn("10.8.0.1 gate.kiwi", hosts)
         sh3, _ = r.script(f.hosts["sh3"])
@@ -16654,7 +16675,7 @@ class TestRecovery(Base):
         master = r.script(f.hosts["sorbet"])[1]
         moving = master.files[cli.MOVING_FILE % master.prefix][0]
         self.assertRegex(moving, r"\n10\.8\.0\.9 vault\.papaya\.kiwi\n")
-        env = next(e for e in master.compose["services"]["km-pihole"]["environment"] if e.startswith("FTLCONF_dns_hosts="))
+        env = master.files["km-pihole/names/kiwi.hosts"][0]
         self.assertNotIn("vault.papaya.kiwi", env)
         self.assertIn(" vault.quince.kiwi", env)                                     # one that does not move: as before
 

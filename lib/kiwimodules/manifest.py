@@ -42,6 +42,7 @@ def stack_vars(host, bundle):
             _bash_var("KS_STACK_SERVICES", list(bundle.services)),
             _bash_var("KS_STACK_URLS", list(bundle.urls)),
             _bash_var("KS_STACK_CHECKS", list(getattr(bundle, "preflight", []))),
+            _bash_var("KS_STACK_LIVE", sorted(getattr(bundle, "live", ()))),
             _bash_var("KS_STACK_VPN_CONTAINER", "%s-vpn-client" % bundle.prefix if "vpn-client" in bundle.modules else ""),
             _bash_var("KS_STACK_VPN_DEPENDENTS", list(getattr(bundle, "vpn_dependents", []))),
             _bash_var("KS_STACK_MESH_SUBNET", getattr(bundle, "mesh_subnet", "") or ""),

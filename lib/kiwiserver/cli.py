@@ -3479,7 +3479,7 @@ def cmd_plan(args):
         except KiwiError as e:
             report.append({"host": h.name, "error": str(e)})
             continue
-        report.append(dict(planmod.compare(b, want, have, before), host=h.name, release=version))
+        report.append(dict(planmod.compare(b, want, have, before, planmod.live(h, b)), host=h.name, release=version))
     if args.porcelain:
         print(json.dumps({"release": VERSION, "hosts": report}, indent=1))
         return
@@ -3505,7 +3505,7 @@ def cmd_plan(args):
             bits.append("nothing restarts")
         print(head + "; ".join(bits))
         for c in x["changed"]:
-            print("   %s%s" % (c["path"], " (new)" if c["new"] else ""))
+            print("   %s%s%s" % (c["path"], " (new)" if c["new"] else "", " (read again while running)" if c.get("live") else ""))
 
 
 CHECK_SCRIPT = r"""

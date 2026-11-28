@@ -76,7 +76,10 @@ if r and r["state"] == "on":
     f = r["facts"]; print("%s|%s|%s|%s|%s" % (f.get("os", ""), f.get("box", ""), f.get("crypt", ""), f.get("clevis", ""), f.get("agent", "")))' "$name")
     [ -n "$row" ] && break; sleep 5; n=$((n - 1))
 done
-[ -n "$row" ]; check $? "the control node lists $name as on, within two minutes"
+[ -n "$row" ]; check $? "the control node lists $name as on, within two minutes" || {
+    say "        the VM's agent says:"; vssh "sudo journalctl -t kiwi-client-agent -u kiwi-client-agent --no-pager -o cat -n 15; sudo systemctl status kiwi-client-agent.timer --no-pager -n 0" 2>&1 | sed 's/^/          /' | cut -c1-200
+    say "        once more by hand:"; vssh "sudo sh -c 'rm -f /run/kiwi-client-agent.last; /usr/local/sbin/kiwi-client-agent; cat /run/kiwi-client-agent.last'" 2>&1 | tail -n 3 | sed 's/^/          /' | cut -c1-200
+}
 IFS='|' read -r os box crypt clevis agent <<<"$row"
 case $os in *Debian*) true ;; *) false ;; esac; check $? "its system: ${os:-?}"
 [ ${#box} = 16 ]; check $? "the box it runs on, as a salted sum: ${box:-none}"

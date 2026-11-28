@@ -51,8 +51,10 @@ cp "$fleet" "$before"
 "$KIWI" client add "$fleet" "$name" >/dev/null && "$KIWI" control push "$fleet" >/dev/null 2>&1
 check $? "$name is a client of the fleet"
 printf '%s' "$PASS_PHRASE" > "$secret"
+# the IT department's way in (--admin-key): the drill logs in through it after the install
+KEY=$w/admin_ed25519; [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -C kiwi-client-iso-drill -f "$KEY"
 "$KIWI" client iso "$fleet" "$name" --system "$system" --base "$base" --output "$w/$name.iso" --keymap us \
-    --passphrase-file "$secret" --days 1 > "$w/iso.log" 2>&1; rc=$?
+    --passphrase-file "$secret" --days 1 --admin-key "$KEY.pub" > "$w/iso.log" 2>&1; rc=$?
 check $rc "kiwi-server client iso makes the stick$([ $rc = 0 ] || echo ": $(tail -n 2 "$w/iso.log" | tr '\n' ' ' | cut -c1-200)")"
 [ $rc = 0 ] || exit 1
 xorriso -osirrox on -indev "$w/$name.iso" -extract /ks.cfg "$w/ks.cfg" >/dev/null 2>&1
@@ -76,6 +78,16 @@ vh 'rm -f qemu.pid'
 vm_start first.log
 sleep 60
 keys "$PASS_PHRASE"; say "        the passphrase typed at its boot prompt"
+admin=kiwi
+up_within 300; check $? "the IT department's key logs in (the local admin kiwi)"
+vssh "sudo -n true"; check $? "and has sudo without a password"
+# a VM behind its host's NAT asks its host's resolver (on sh3: v1's, which knows no .home names)
+url=$(sed -n 's|.*\(https://[^/]*\)/api/client/join/.*|\1|p' "$w/ks.cfg" | head -n 1); host=${url#https://}
+addr=$(PYTHONPATH="$here/lib" python3 -c '
+import sys
+from kiwiserver import config, machineagent
+f = config.Fleet.load(sys.argv[1]); h = machineagent.control_host(f); print(((h.cfg.get("network") or {}).get("address") or "").split("/")[0])' "$fleet")
+vssh "getent hosts $host >/dev/null || { echo '$addr $host' | sudo tee -a /etc/hosts >/dev/null; sudo systemctl restart kiwi-join-once.service; }"
 n=60; got=
 while [ "$n" -gt 0 ]; do got=$(listed); [ -n "$got" ] && break; sleep 10; n=$((n - 1)); done
 [ -n "$got" ]; check $? "it joined at its first start: the control node lists $name as on"

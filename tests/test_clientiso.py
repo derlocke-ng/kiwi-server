@@ -31,7 +31,15 @@ class TestClientIso(unittest.TestCase):
         self.assertIn("bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry "
                       "ghcr.io/ublue-os/bluefin-dx:stable", ks)                           # signed updates from then on
         self.assertNotIn("bootc switch", clientiso.kickstart("desk", clientiso.image("silverblue"), URL, CA))
-        managed = clientiso.kickstart("desk", clientiso.image("bluefin"), URL, CA, managed=True)
+        managed = clientiso.kickstart("desk", clientiso.image("bluefin"), URL, CA, managed=True,
+                                      admin_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN it@company")
+        self.assertIn('user --name=kiwi --groups=wheel --lock', managed)
+        self.assertIn('sshkey --username=kiwi "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0wmN it@company"', managed)
+        self.assertIn("systemctl enable sshd.service", managed)
+        self.assertIn("printf 'kiwi ALL=(ALL) NOPASSWD: ALL\\n' > /etc/sudoers.d/kiwi-it", managed)
+        self.assertNotIn("sshd", clientiso.kickstart("desk", "x", URL, CA))
+        with self.assertRaisesRegex(KiwiError, "no SSH public key"):
+            clientiso.kickstart("desk", "x", URL, CA, admin_key="-----BEGIN OPENSSH PRIVATE KEY-----")
         self.assertIn("firstboot --disable\n", managed)                                    # no local admin on it
         self.assertIn("--passphrase=kiwitest", clientiso.kickstart("desk", clientiso.image("silverblue"), URL, CA,
                                                                     passphrase="kiwitest"))

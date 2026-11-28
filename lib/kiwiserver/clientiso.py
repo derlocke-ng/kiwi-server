@@ -60,7 +60,7 @@ def image(system, override=None):
 
 
 def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en_US.UTF-8", passphrase=None,
-              managed=False):
+              managed=False, admin_key=None):
     """The kickstart, for the text installer (Fedora 45's web installer stops at its review page
     instead of running a kickstart through, 28 Nov 2026; the text one asks for the passphrase on
     the screen when it is not given): the image onto an encrypted btrfs disk (every disk of the computer is wiped),
@@ -74,6 +74,13 @@ def kickstart(name, img, join_url, ca_pem, keymap="us", timezone="UTC", lang="en
     for what, value in (("keymap", keymap), ("timezone", timezone), ("lang", lang)):
         if not re.fullmatch(r"[A-Za-z0-9_./+-]+", str(value)):
             raise KiwiError("%s %r is not a plain word" % (what, value))
+    admin = ""
+    if admin_key:       # the IT department's own way in: a local admin who logs in by this key only
+        key = admin_key.strip()
+        if "\n" in key or not re.match(r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+( [^\"]*)?$", key):
+            raise KiwiError("--admin-key holds no SSH public key")
+        admin = ('user --name=kiwi --groups=wheel --lock --gecos="kiwi-server: the IT department\'s access"\n'
+                 'sshkey --username=kiwi "%s"\n' % key)
     secret = ""
     if passphrase is not None:
         if not passphrase or "'" in passphrase or "\n" in passphrase:
@@ -86,7 +93,7 @@ keyboard --vckeymap=%(keymap)s
 timezone %(timezone)s --utc
 network --bootproto=dhcp --device=link --activate --hostname=%(name)s
 rootpw --lock
-zerombr
+%(admin)szerombr
 clearpart --all --initlabel --disklabel=gpt
 autopart --type=btrfs --encrypted --luks-version=luks2%(secret)s
 ostreecontainer --url=%(img)s --transport=registry --no-signature-verification
@@ -104,10 +111,13 @@ cat > /etc/kiwi-client-join/join.sh <<'KIWI_EOF'
 cat > /etc/systemd/system/kiwi-join-once.service <<'KIWI_EOF'
 %(unit)sKIWI_EOF
 systemctl enable kiwi-join-once.service
-%(sign)s%%end
+%(sshd)s%(sign)s%%end
 """ % {"name": name, "lang": lang, "keymap": keymap, "timezone": timezone, "secret": secret, "img": img,
        "ca": ca_pem if ca_pem.endswith("\n") else ca_pem + "\n", "url": join_url, "unit": JOIN_UNIT,
-       "script": JOIN_SCRIPT, "firstboot": "disable" if managed else "enable",
+       "script": JOIN_SCRIPT, "firstboot": "disable" if managed else "enable", "admin": admin,
+       "sshd": ("# its admin's way in: the key only, no password to type, so sudo without one\nsystemctl enable sshd.service\n"
+                "printf 'kiwi ALL=(ALL) NOPASSWD: ALL\\n' > /etc/sudoers.d/kiwi-it && chmod 0440 /etc/sudoers.d/kiwi-it\n")
+       if admin else "",
        "kind": " (managed: no local user, its people log in with the network's accounts)" if managed else "",
        "sign": ("# updates checked against the image's signature from now on\n"
                 "bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry %s\n" % img)

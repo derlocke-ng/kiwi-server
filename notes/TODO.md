@@ -43,8 +43,10 @@ L: days. New ideas go to the end of their section.
 10. The client side: devices enrolled and kept by the network (bundles, the app, phones). The owner,
     23 Nov 2026: his workstation's own system (Bluefin-DX, beside lemonaide's uCore on the same
     machine) is to be managed by kiwi-server later too. M-L
-11. The agent takes orders from the control node: restart a service, update now (scale.md; the
-    runbook's actions, asked for by a person). M
+11. ~~The agent takes orders from the control node: restart a service, update now (scale.md; the
+    runbook's actions, asked for by a person).~~ Done (2.326.0): `control order`, `POST /api/orders`,
+    signed with the machine's key, in the answer to its report. Open: a button on the page and in
+    the app; the runbook's actions on the control node through it. M
 12. ~~An upgrade rehearsal drill~~ Done (2.314.0): tests/drills/upgrade-rehearsal.sh, an older
     release applied to a throwaway machine, then the one under test, its services asked after each
     and again 150 s later. Passed on mulberry from v2.306.0; an older release that cannot read

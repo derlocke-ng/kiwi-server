@@ -3321,7 +3321,36 @@ def make_app(control: Control):
                              h.get("x-kiwi-sign") or "", body)
         if why:
             return JSONResponse({"error": why}, status_code=503 if "locked" in why else 403)
+        if h.get("x-kiwi-orders") == "1":       # an agent that takes orders: its orders, one line each
+            return PlainTextResponse("".join(line + "\n" for line in control.answer(h.get("x-kiwi-host") or "", body)))
         return JSONResponse({"ok": True})
+
+    @app.post("/api/orders")
+    async def api_order(request: Request):
+        """An order for a machine's agent, for a computer that manages the network (its key's
+        token): {host, what: restart|start|stop|update, target: a service} -> the order. Its agent
+        takes it with its next report, within a minute; GET /api/orders says what came of it."""
+        who = bearer(request)
+        if not who:
+            return JSONResponse({"error": "who?"}, status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "a JSON object: {host, what, target}"}, status_code=400)
+        try:
+            o = control.order(str(body.get("host") or ""), str(body.get("what") or ""), str(body.get("target") or ""), user=who)
+        except KiwiError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return o
+
+    @app.get("/api/orders")
+    def api_orders(request: Request, host: str = ""):
+        """The orders of the last hours and what came of them."""
+        if not (user(request) or bearer(request)):
+            return JSONResponse({"error": "log in"}, status_code=401)
+        return {"orders": control.orders(host or None)}
 
     @app.get("/api/jobs/{jid}/log")
     def job_log(request: Request, jid: str, offset: int = 0, text: int = 0, download: int = 0):

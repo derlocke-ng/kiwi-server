@@ -4187,6 +4187,29 @@ def cmd_control(args):
         for mark in controlsync.watch_api(fleet_dir, key):
             print("change", mark, flush=True)
         sys.exit(1)                     # the stream ended: whoever reads it opens it again
+    if args.action in ("order", "orders"):     # an order for a machine's agent (machineagent.py), through the control node
+        if args.action == "orders":
+            for o in controlsync.orders_api(fleet_dir, args.link, key):
+                print("%s  %-9s %-8s %-7s %-14s %s" % (time.strftime("%d %b %H:%M", time.localtime(o.get("at") or 0)), o.get("host"),
+                                                       o.get("state"), o.get("what"), o.get("target"), o.get("said") or ""))
+            return
+        what = (args.more or [""])[0]
+        if not args.link or not what:
+            raise KiwiError("kiwi-server control order FLEET MACHINE restart|start|stop SERVICE, or MACHINE update")
+        o = controlsync.order_api(fleet_dir, args.link, what, (args.more + [""])[1], key)
+        util.say("%s's agent takes it with its next report, within a minute (order %s)" % (args.link, o["id"]))
+        for _ in range(36):                 # its report comes every minute; what came of it, the one after
+            time.sleep(5)
+            got = next((x for x in controlsync.orders_api(fleet_dir, args.link, key) if x.get("id") == o["id"]), None)
+            if got and got.get("state") in ("ok", "failed", "gone"):
+                said = {"ok": "done", "failed": "failed (exit %s)" % got.get("rc"), "gone": "not taken"}[got["state"]]
+                util.say("%s: %s %s: %s%s" % (args.link, what, o["target"], said, (" — " + got["said"]) if got.get("said") else ""))
+                if got["state"] != "ok":
+                    sys.exit(1)
+                return
+        util.warn("no answer from %s's agent in three minutes: kiwi-server control orders %s %s says what comes of it"
+                  % (args.link, fleet_name, args.link))
+        sys.exit(1)
     if args.action == "activity":       # the control page's Activity: tasks, and who did what
         out = controlsync.activity_api(fleet_dir, key)
         if args.porcelain:
@@ -7200,11 +7223,12 @@ def build_parser():
     s.add_argument("--svg", action="store_true", help="an SVG image on standard output")
     s = sub("control", cmd_control)
     s.add_argument("action", choices=["push", "pull", "diff", "join", "invite", "requests", "accept", "deny", "ring", "activity", "run",
-                                      "watch", "ack"])
+                                      "watch", "ack", "order", "orders"])
     s.add_argument("fleet")
     s.add_argument("link", nargs="?", help="join: the invite link from the control page; accept, deny: the computer's name; "
-                                           "run: the action (apply, update, status, plan, check, backup …); ack: the emergency")
-    s.add_argument("more", nargs="*", help="run: the machines")
+                                           "run: the action (apply, update, status, plan, check, backup …); ack: the emergency; "
+                                           "order, orders: the machine")
+    s.add_argument("more", nargs="*", help="run: the machines; order: restart|start|stop SERVICE, or update")
     s.add_argument("--part", metavar="NAME", help="run: the part (move, switch), the container (service) or the ring the action is for")
     s.add_argument("--at", metavar="WHAT", help="run: what to do with it (service: restart, stop, start) or a snapshot's time (restore)")
     s.add_argument("--dir", metavar="FOLDER", help="a synced folder (Nextcloud, …) instead of a control node: push, pull, join")

@@ -22,13 +22,47 @@ FRESH = 150         # seconds a report counts as how the machine is now (it come
 SKEW = 300          # seconds a report's own time may be off the control node's
 LIMIT = 512 * 1024  # bytes of a report
 
+ORDERS = ("restart", "start", "stop", "update")       # what the agent takes; nothing else, never a command
+ORDER_AGE = 900     # seconds an order counts; older ones are answered "too old" and not run
+
 SCRIPT = r'''#!/bin/bash
 # kiwi-server: this machine's agent (docs/design/scale.md). Every minute it tells the control node
 # how this machine is: what the control node used to log in for. Signed with a key of this
-# machine's own, sent over the network's own HTTPS. It changes nothing here.
+# machine's own, sent over the network's own HTTPS. The control node's answer may carry orders for
+# it, signed with the same key: restart, start or stop one of the stack's services, or run the
+# update now. Nothing else: never a command, never a service outside the stack.
 d=/etc/kiwi-server/agent
 . "$d/conf" || exit 0
-body=$(mktemp) || exit 0; head=$(mktemp) || exit 0; trap 'rm -f "$body" "$head"' EXIT
+st=/var/lib/kiwi-server/agent; mkdir -p -m 0700 "$st" 2>/dev/null
+body=$(mktemp) || exit 0; head=$(mktemp) || exit 0; resp=$(mktemp) || exit 0; trap 'rm -f "$body" "$head" "$resp"' EXIT
+sig() { openssl dgst -sha256 -hmac "$(cat "$d/key")" -r 2>/dev/null | cut -d' ' -f1; }
+orders() {      # the control node's answer: lines "order ID WHAT TARGET AT SIGNATURE"
+    local kind id what target at sign want now services said rc
+    while read -r kind id what target at sign; do
+        [ "$kind" = order ] || continue
+        case $id in ""|*[!A-Za-z0-9-]*) continue ;; esac
+        case $at in ""|*[!0-9]*) continue ;; esac
+        grep -qx "$id" "$st/done" 2>/dev/null && continue            # done once, never again
+        want=$(printf 'order\n%s\n%s\n%s\n%s\n%s' "$NAME" "$id" "$what" "$target" "$at" | sig)
+        if [ -z "$want" ] || [ "$want" != "$sign" ]; then logger -t kiwi-agent "order $id is not signed by the control node: left"; continue; fi
+        echo "$id" >> "$st/done"                                    # before it runs: a run cut off never repeats it
+        now=$(date +%s)
+        if [ $((now - at)) -gt 900 ] || [ $((at - now)) -gt 300 ]; then echo "kiwi-done $id 2 too old" >> "$st/told"; continue; fi
+        services=" $(sed -n 's/^STACK_SERVICES="\(.*\)"$/\1/p' /etc/kiwi-server/stack.env 2>/dev/null) "
+        case $what in
+            restart|start|stop)
+                case $services in *" $target "*) ;; *) echo "kiwi-done $id 2 no such service here: $target" >> "$st/told"; continue ;; esac
+                said=$(timeout 180 systemctl "$what" "$target.service" 2>&1); rc=$? ;;
+            update)
+                said=$(systemd-run --quiet --collect --unit="kiwi-order-$id" /usr/local/bin/kiwi-stack update 2>&1); rc=$?
+                [ $rc = 0 ] && said="started (journalctl -u kiwi-order-$id)" ;;
+            *) echo "kiwi-done $id 2 not an order this agent takes: $what" >> "$st/told"; continue ;;
+        esac
+        logger -t kiwi-agent "order $id from the control node: $what $target: exit $rc"
+        echo "kiwi-done $id $rc $(printf '%s' "$said" | tr '\n' ' ' | cut -c1-200)" >> "$st/told"
+    done < "$1"
+    if [ -f "$st/done" ]; then tail -n 200 "$st/done" > "$st/done.new" && mv -f "$st/done.new" "$st/done"; fi
+}
 if [ "${1:-}" = last ]; then
     # its last report, when the machine goes down (kiwi-agent-last.service stops): why, so that a
     # restart and a crash are no longer the same silence (docs/design/authority.md, step 3). Only
@@ -47,17 +81,23 @@ if [ "${1:-}" = last ]; then
 else
     exec 9>/run/kiwi-agent.lock; flock -n 9 || exit 0
     timeout 45 bash "$d/facts.sh" > "$body" 2>/dev/null
+    # what the orders came to, since the last report the control node took
+    [ -s "$st/told" ] && cat "$st/told" >> "$body"
     wait=20
 fi
 now=$(date +%s); boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 sum=$(sha256sum "$body" | cut -d' ' -f1)
 sign=$(printf '%s\n%s\n%s\n%s' "$NAME" "$now" "$boot" "$sum" | openssl dgst -sha256 -hmac "$(cat "$d/key")" -r 2>/dev/null | cut -d' ' -f1)
 if [ -z "$sign" ]; then out="no signature (is openssl there?)"; else
-out=$(curl -sS --max-time "$wait" --cacert "$d/ca.pem" -o /dev/null -D "$head" -w '%{http_code}' -X POST \
+out=$(curl -sS --max-time "$wait" --cacert "$d/ca.pem" -o "$resp" -D "$head" -w '%{http_code}' -X POST \
     -H "Content-Type: text/plain" -H "X-Kiwi-Host: $NAME" -H "X-Kiwi-Time: $now" -H "X-Kiwi-Boot: $boot" \
-    -H "X-Kiwi-Sign: $sign" --data-binary @"$body" "$URL/api/report" 2>&1 | tail -1)
+    -H "X-Kiwi-Sign: $sign" -H "X-Kiwi-Orders: 1" --data-binary @"$body" "$URL/api/report" 2>&1 | tail -1)
 fi
 [ "${1:-}" = last ] && { logger -t kiwi-agent "last report to $URL ($(cut -d' ' -f2- "$body")): $out"; exit 0; }
+if [ "$out" = 200 ]; then
+    : > "$st/told"                  # it has them
+    orders "$resp"
+fi
 [ "$out" = "$(cat /run/kiwi-agent.last 2>/dev/null)" ] || { logger -t kiwi-agent "report to $URL: $out"; echo "$out" > /run/kiwi-agent.last; }
 '''
 SERVICE = ("[Unit]\nDescription=kiwi-server: tell the control node how this machine is\nAfter=network-online.target\n\n"
@@ -122,6 +162,25 @@ def url(fleet, ms):
         return None
     name = namesmod.name_of(fleet, c, "control", ms) if ms is not None else None
     return "https://%s" % (name or "control." + c.hostname)
+
+
+def order_signature(key_text, name, oid, what, target, at):
+    """What signs an order for a machine: its name, the order's id, what, for what, and when it
+    was given. With the machine's own key: only the control node (with the seed) and the machine
+    have it. 'order' first: a report's signature can never pass for one."""
+    text = "order\n%s\n%s\n%s\n%s\n%s" % (name, oid, what, target, at)
+    return hmac.new(key_text.encode(), text.encode(), hashlib.sha256).hexdigest()
+
+
+def done_lines(body):
+    """[(id, exit code, what it said)] of the orders a report says it ran."""
+    out = []
+    for line in body.decode(errors="replace").splitlines():
+        if line.startswith("kiwi-done "):
+            parts = line.split(" ", 3)
+            if len(parts) >= 3 and parts[2].lstrip("-").isdigit():
+                out.append((parts[1][:64], int(parts[2]), (parts[3] if len(parts) > 3 else "")[:200]))
+    return out
 
 
 def key(fleet, host):

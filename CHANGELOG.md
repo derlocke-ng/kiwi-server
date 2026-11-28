@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.326.0 — a machine's agent takes orders
+
+- **Orders for a machine's agent** (docs/control.md): restart, start or stop one of the
+  machine's own services, or run its update now, given through the control node
+  (`kiwi-server control order FLEET MACHINE restart kn-vault`, `… MACHINE update`; `control
+  orders` lists them; `POST /api/orders` for the apps). The agent gets the order with the
+  answer to its next report, within a minute, signed with the machine's own key; it runs an
+  order once, refuses one older than fifteen minutes, one for a service outside its stack and
+  anything that is not one of those four, and says what came of it with its next report. The
+  order and its answer are in the Activity. No SSH is needed for it, and no apply goes this
+  way. The step after the reports in docs/design/scale.md ("The agent"), and the way the client
+  agent for desktops will take what the network pushes. An agent of an older release, or an
+  older control node, works on as before.
+- `tests/drills/agent-orders.sh FLEET MACHINE SERVICE` proves it end to end.
+
 ## 2.325.0 — an apply no longer takes a running machine's names away
 
 - A machine whose settings this kiwi-server cannot read (most often a setting a newer release

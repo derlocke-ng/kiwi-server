@@ -54,6 +54,7 @@ ks_apt_update() {
     for n in $(seq 90); do
         if apt-get -o DPkg::Lock::Timeout=600 -q update; then
             KS_APT_UPDATED=1
+            : > "$KS_STATE_DIR/apt-lists" 2>/dev/null || true       # when: for ks_apt_fresh
             return 0
         fi
         pgrep -x apt-get >/dev/null || pgrep -x apt >/dev/null || pgrep -f unattended-upgrade >/dev/null || break
@@ -61,6 +62,16 @@ ks_apt_update() {
         sleep 10
     done
     ks_die "apt-get update did not work — is the Internet reachable from this machine?"
+}
+# The package lists, fetched again when this tool last did so a day or more ago (a first apply:
+# never). Until 0.9.43 every apply fetched them: 18 of an apply's 43 seconds on a Rock Pi, a few
+# on a virtual machine, with nothing to install. What an apply installs asks for the lists itself
+# (ks_apt), and the system's own updates fetch theirs.
+ks_apt_fresh() {
+    ks_is_debian || return 0
+    local stamp=$KS_STATE_DIR/apt-lists
+    if [[ -e $stamp && -z $(find "$stamp" -mmin +1440 2>/dev/null) ]]; then return 0; fi
+    ks_apt_update
 }
 ks_apt() { # package...
     ks_is_debian || { ks_warn "not Debian — cannot install: $*"; return 0; }
@@ -1747,7 +1758,7 @@ ks_base() {
     fi
     timedatectl set-timezone "$KS_TIMEZONE" 2>/dev/null || true
     ks_apt_proxy quiet
-    ks_apt_update
+    ks_apt_fresh
     ks_trust_ca
 }
 

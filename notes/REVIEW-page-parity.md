@@ -189,4 +189,4 @@ says the app uses status, machines, activity and the registry only.
 | Link a new network by card | `federate --invite`, `--accept` | not built | *Link a new network* (next release) |
 | Update the control node itself | none | *Update everything…* runs on the control node | *Update everything* (2.265.0) |
 | The agent's reports | `status --reports DIR` | nothing to click | nothing to click (2.264.0) |
-| People's computers that report (clients) | `client add|install|list|remove` | not built | Devices, *Computers that report* (next release) |
+| People's computers that report (clients) | `client add`, `install`, `list`, `remove` | not built | Devices, *Computers that report* (next release) |

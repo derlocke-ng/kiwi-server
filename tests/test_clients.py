@@ -116,7 +116,7 @@ class TestClientProfileAndOrders(unittest.TestCase):
         self.assertIn("updated", self.read("trust"))
         self.assertEqual(self.read("imported"), self.conf)                           # the VPN, imported as kiwi-home
         nm = self.read("nm")
-        self.assertIn("connection modify kiwi-home ipv4.never-default yes ipv4.dns-search ~home", nm)
+        self.assertIn("connection modify kiwi-home ipv4.never-default yes ipv4.dns-search ~.,~home ipv4.dns-priority -50", nm)
         self.assertIn("connection up kiwi-home", nm)
         self.assertFalse([f for f in os.listdir(os.path.join(self.t, "run")) if f.startswith("kiwi-client.")])  # the config left no copy
         self.assertIn("its profile is applied", self.read("logged"))

@@ -517,14 +517,15 @@ passphrase on the stick: for test machines only.
   network whose hardware a computer runs on.
 - It applies its profile when the network changes it: the network's CA in the system's trust
   store, and its VPN as a NetworkManager connection named after the network (`kiwi-home` for
-  `home`) that comes up by itself. Only the
-  network goes through it, and only the network's names are asked there, unless the computer
-  was added with everything through the VPN.
+  `home`) that comes up by itself. Only the network goes through it, unless the computer was
+  added with everything through the VPN; every name is asked at the network's DNS, so its
+  blocklist works on the computer wherever it is.
 - With [kiwi-killswitch](https://github.com/derlocke-ng/kiwi-killswitch) on the computer (0.3.0
   or later, `kiwi install kiwi-killswitch`), the kill switch decides what goes through the VPN:
-  `full` (everything, names too; the Internet only through the VPN, or through one of the
-  network's gateways when the computer is on its LAN), `network` (only the network and its
-  names; the rest the computer's own way), or `off`. The agent writes
+  `full` (everything; the Internet only through the VPN, or through one of the network's
+  gateways when the computer is on its LAN), `network` (only the network; the Internet the
+  computer's own way), or `off`. In both `full` and `network` every name is asked at the
+  network's DNS, with its blocklist; `off` is the computer as it was. The agent writes
   `/etc/kiwi-killswitch/network.json` from the profile. In the client's block,
   `killswitch_modes` says which modes its person may pick and `killswitch_mode` the one it starts
   in (`full` for a client added with `--full`, else `network`). A managed computer has `full`, and

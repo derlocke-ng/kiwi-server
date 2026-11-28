@@ -291,7 +291,7 @@ killswitch() {  # POLICY: kiwi-killswitch's network file (the modes, the network
     say "the kill switch's network policy is in place$([ -x /usr/local/sbin/kiwi-killswitchd ] || echo ' (kiwi-killswitch is not installed: kiwi install kiwi-killswitch)')"
 }
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
-    local p=$1 ca f upd vpn con mode search tmp ks
+    local p=$1 ca f upd vpn con mode search tmp ks nd
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
     if [ -n "$ca" ]; then
         if [ -d /etc/pki/ca-trust/source/anchors ]; then f=/etc/pki/ca-trust/source/anchors/kiwi-$NETWORK.pem; upd=update-ca-trust
@@ -329,10 +329,10 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     fi
     if [ -n "$ks" ]; then
         :   # kiwi-killswitch owns the connection's routing: the mode its person or the network chose
-    elif [ "$mode" = full ]; then     # everything through the VPN, every name asked there
-        nmcli connection modify "$con" ipv4.never-default no ipv4.dns-search "~." ipv6.method disabled connection.autoconnect yes
-    else                            # only the network: its names to its DNS, the Internet as it was
-        nmcli connection modify "$con" ipv4.never-default yes ipv4.dns-search "$search" ipv6.method disabled connection.autoconnect yes
+    else    # every name at the network's DNS (its blocklist), and only there (-50); `full` sends everything through
+        [ "$mode" = full ] && nd=no || nd=yes   # the VPN, else only the network goes there, the Internet as it was
+        nmcli connection modify "$con" ipv4.never-default $nd ipv4.dns-search "~.,$search" ipv4.dns-priority -50 \
+            ipv6.method disabled connection.autoconnect yes
     fi
     nmcli connection up "$con" >/dev/null 2>&1 || say "its VPN connection $con did not come up now: NetworkManager tries again"
     return 0
@@ -644,7 +644,8 @@ def managed_of(block, accounts_url):
 
 
 # kiwi-killswitch's modes with the network's file (docs/design/clients.md): `full` everything through
-# the VPN, names too; `network` only the network and its names, the rest the computer's own way; `off`
+# the VPN; `network` only the network, the Internet the computer's own way; every name at the network's
+# DNS (its blocklist) in both; `off` none of it
 MODES = ("full", "network", "off")
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
@@ -745,8 +746,8 @@ def dconf_files(block):
 def profile(fleet, name, linked=(), unlock=None, managed=None, gateways=()):
     """The client's profile, as the agent reads it: one fact a line. The network's CA; its VPN (a
     WireGuard config, as NetworkManager imports it) when it has a place on the VPN, with how much
-    goes through it: `split` only the network (its names to its DNS, the Internet as it was), `full`
-    everything (the config's own AllowedIPs say which)."""
+    goes through it: `split` only the network, `full` everything (the config's own AllowedIPs say
+    which); every name is asked at the network's DNS in both."""
     import base64
     from . import connect as connectmod
     domain = str(fleet.defaults.get("domain") or "home")

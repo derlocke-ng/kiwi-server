@@ -392,5 +392,7 @@ def join_script(fleet, name, url, ca):
 def join_command(url, code, ca_b64):
     """The one command a person runs on the computer: the network's CA travels with it, so the
     download is checked against it; then the script, as root."""
-    return ("c=$(mktemp) && echo %s | base64 -d > \"$c\" && curl -fsS --cacert \"$c\" %s/api/client/join/%s | sudo sh; rm -f \"$c\""
+    # the script (with the key) only in a variable and the pipe; a code used up says why, and fails
+    return ("c=$(mktemp); echo %s | base64 -d > \"$c\"; s=$(curl -sS --fail-with-body --cacert \"$c\" %s/api/client/join/%s); "
+            "r=$?; rm -f \"$c\"; if [ $r = 0 ]; then printf '%%s\\n' \"$s\" | sudo sh; else printf '%%s\\n' \"$s\" >&2; false; fi"
             % (ca_b64, url, code))

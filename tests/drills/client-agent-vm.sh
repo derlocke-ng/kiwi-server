@@ -33,10 +33,10 @@ trap done_ EXIT
 vh '[ -s bound ]' || { echo "the VM is not installed and bound yet: run desktop-clevis-vm.sh first" >&2; exit 2; }
 admin=$(python3 -c "import yaml; print(yaml.safe_load(open('fleet/fleet.yaml'))['defaults']['admin']['user'])")
 
-vh_prepare; check $? "the VM's folder on ${VMHOST:-this computer}: $VD" || exit 1
+vh_prepare; rc=$?; check $rc "the VM's folder on ${VMHOST:-this computer}: $VD"; [ $rc = 0 ] || exit 1
 tunnel_up 7611 7612 7613; check $? "the test rings reach ${VMHOST:-the VM}"
 rings health1 health2 auto; vm_start client1.log
-up_within 300; check $? "the desktop VM is up (its disk opened by its rings)" || exit 1
+up_within 300; rc=$?; check $rc "the desktop VM is up (its disk opened by its rings)"; [ $rc = 0 ] || exit 1
 
 "$KIWI" control pull "$fleet" >/dev/null 2>&1 || true
 cp "$fleet" "$before"
@@ -76,7 +76,8 @@ if r and r["state"] == "on":
     f = r["facts"]; print("%s|%s|%s|%s|%s" % (f.get("os", ""), f.get("box", ""), f.get("crypt", ""), f.get("clevis", ""), f.get("agent", "")))' "$name")
     [ -n "$row" ] && break; sleep 5; n=$((n - 1))
 done
-[ -n "$row" ]; check $? "the control node lists $name as on, within two minutes" || {
+[ -n "$row" ]; check $? "the control node lists $name as on, within two minutes"
+[ -n "$row" ] || {
     say "        the VM's agent says:"; vssh "sudo journalctl -t kiwi-client-agent -u kiwi-client-agent --no-pager -o cat -n 15; sudo systemctl status kiwi-client-agent.timer --no-pager -n 0" 2>&1 | sed 's/^/          /' | cut -c1-200
     say "        once more by hand:"; vssh "sudo sh -c 'rm -f /run/kiwi-client-agent.last; /usr/local/sbin/kiwi-client-agent; cat /run/kiwi-client-agent.last'" 2>&1 | tail -n 3 | sed 's/^/          /' | cut -c1-200
 }

@@ -16774,6 +16774,38 @@ class TestRecovery(Base):
         errs = cli.check(net, self.roles, self.ms, list(net.hosts.values()), strict=False)
         self.assertFalse([e for e in errs if "kiwi update" in e], errs)
 
+    def test_an_apply_does_not_leave_a_running_machines_names_out(self):
+        """A machine whose settings this release cannot read is left out of the name scan. When it
+        runs (it was applied), an apply of any other machine is refused: the name servers would
+        lose its names, and its sites would be gone (found 28 Nov 2026: `apply --changed` went on)."""
+        net = self.network()
+        pap = net.raw["hosts"]["papaya"]
+        bad = dict(pap["node"], vault=dict(pap["node"].get("vault") or {}, from_a_later_release=1))
+        f = self.network(papaya=dict(pap, node=bad))
+
+        def apply(*more):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    rc = cli.main(["apply", f.path, "--no-run"] + list(more))
+                except SystemExit as e:
+                    rc = e.code
+            return rc, out.getvalue() + err.getvalue()
+        rc, said = apply("lychee")                              # papaya was never applied: no names of it to lose
+        self.assertNotIn("would be gone", said)
+        cli.change_state(f, lambda st: st.setdefault("applied", {}).update(papaya=int(time.time())))
+        rc, said = apply("lychee")
+        self.assertEqual(rc, 1, said)
+        self.assertIn("the settings of papaya cannot be read here", said)
+        self.assertIn("its sites would be gone from the network. Nothing was applied", said)
+        self.assertIn("kiwi update kiwi-server", said)          # an unknown setting: likely a newer release's
+        # the others applied with a script that is not today's: `--changed` finds them, and is refused too
+        cli.change_state(f, lambda st: st.setdefault("rendered", {}).update(
+            {n: "v2:an-older-script" for n in f.hosts if n != "papaya"}))
+        rc, said = apply("--changed")
+        self.assertEqual(rc, 1, said)
+        self.assertIn("the settings of papaya cannot be read here", said)
+
     def test_a_store_installed_anew_brings_its_repositories_back_from_the_offsite_copy(self):
         lych = self.network().raw["hosts"]["lychee"]
         bs = dict(lych["node"]["backup-server"], offsite_url="https://dav.example.org/kiwi", offsite_user="me",

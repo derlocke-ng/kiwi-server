@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.325.0 — an apply no longer takes a running machine's names away
+
+- A machine whose settings this kiwi-server cannot read (most often a setting a newer release
+  saved) was left out of the names every other machine carries, with a warning only. An apply
+  of any other machine, `apply --changed` among them, would then have given the name servers
+  and the master a list without that machine's names, and its sites would have been gone from
+  the network. Now such an apply stops before anything is touched, names the machine and says
+  why; for an unknown setting or module it says to update kiwi-server. A machine that was never
+  applied has no names yet and stops nothing. (docs/machines.md, "Running machines")
+
 ## 2.324.0 — the disk's key is asked again only when something changed
 
 - Each apply of an encrypted machine asked whether the disk's key on record still opens its

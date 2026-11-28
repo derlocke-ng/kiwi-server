@@ -85,8 +85,9 @@ L: days. New ideas go to the end of their section.
        Open: the control node doing it by itself after a change or a release (the owner's word
        is needed: it restarts things without a person), and putting a machine back. M
     c. The fleet says which release it needs. Done in part (2.313.0): an unknown setting or
-       module says that an update is the likely cure. Open: fleet-wide commands going on
-       without the one machine whose setting is not known; the control node updating itself
+       module says that an update is the likely cure. An apply no longer goes on without a running machine
+       whose settings are not known (2.325.0: it would have dropped its names). Open: read commands
+       (status, list) go on already; plan refuses as a whole; the control node updating itself
        before it takes a newer fleet (today it warns after the push). S-M
     d. Begun (2.318.0): a health check for 25 parts (on the owner's machines 88 of 107
        containers had none; podman drops the image's own), read by the status, the runbook and

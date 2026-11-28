@@ -40,7 +40,10 @@ s.send(b\"sendkey ret\\n\"); time.sleep(0.5); s.close()' '$1'"
 listed() {      # the control node's row of NAME, as "state|os", once a report of this run came
     "$KIWI" client list "$fleet" --porcelain 2>/dev/null | python3 -c '
 import json, sys
-r = next((x for x in json.load(sys.stdin)["clients"] if x["name"] == sys.argv[1]), None)
+try:
+    r = next((x for x in json.load(sys.stdin)["clients"] if x["name"] == sys.argv[1]), None)
+except ValueError:      # no answer this time (a locked store says so in words): asked again
+    r = None
 if r and r["state"] == "on":
     print("%s|%s" % (r["state"], r["facts"].get("os", "")))' "$name"
 }
@@ -99,10 +102,15 @@ addr=$(PYTHONPATH="$here/lib" python3 -c '
 import sys
 from kiwiserver import config, machineagent
 f = config.Fleet.load(sys.argv[1]); h = machineagent.control_host(f); print(((h.cfg.get("network") or {}).get("address") or "").split("/")[0])' "$fleet")
-vssh "getent hosts $host >/dev/null || { echo '$addr $host' | sudo tee -a /etc/hosts >/dev/null; sudo systemctl restart kiwi-join-once.service; }"
+# (v1's resolver answers "::" for them, so a name that "resolves" is not enough: the address must be the control node's)
+vssh "[ \"\$(getent ahostsv4 $host | awk 'NR==1{print \$1}')\" = '$addr' ] || { echo '$addr $host' | sudo tee -a /etc/hosts >/dev/null; sudo systemctl restart kiwi-join-once.service; }"
 n=60; got=
 while [ "$n" -gt 0 ]; do got=$(listed); [ -n "$got" ] && break; sleep 10; n=$((n - 1)); done
 [ -n "$got" ]; check $? "it joined at its first start: the control node lists $name as on"
+if [ -z "$got" ]; then      # what the computer says, before the VM goes off
+    vssh "getent ahostsv4 $host | head -n 1; sudo journalctl -b --no-pager -u kiwi-join-once -u kiwi-client-agent | tail -n 25" > "$w/join.log" 2>&1
+    say "        its join's journal: $w/join.log"; sed 's/^/        | /' "$w/join.log" | tail -n 12
+fi
 case ${got#*|} in *[Bb]luefin*|*Fedora*|*Silverblue*) rc=0 ;; *) rc=1 ;; esac
 check $rc "its system: ${got#*|}"
 [ "$fails" = 0 ] && say "all passed" || say "$fails wrong"

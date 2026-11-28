@@ -356,6 +356,46 @@ ks_unit() { # NAME   — unit file on stdin; systemd reads its units again when 
     ks_write "${KS_SYSTEMD_DIR:-/etc/systemd/system}/$1" 0644
     ks_reload
 }
+# What firewalld holds, asked over D-Bus: busctl answers in a hundredth of a second, firewall-cmd
+# starts Python each time (0.7 s on a small machine, and an apply asked seven times: 28 Nov 2026).
+# firewall-cmd when busctl is not there or does not answer. Changes still go through firewall-cmd.
+ks_fw_bus() { busctl call org.fedoraproject.FirewallD1 "$@" 2>/dev/null || true; }    # no answer: nothing (never a failure: pipefail and the role's error trap)
+ks_fw_words() { # busctl's answer on stdin -> its strings, one per line ("…" taken off)
+    { grep -o '"[^"]*"' || true; } | tr -d '"'
+}
+ks_fw_default_zone() {
+    local z
+    z=$(ks_fw_bus /org/fedoraproject/FirewallD1 org.fedoraproject.FirewallD1 getDefaultZone | ks_fw_words)
+    [[ -n $z ]] || z=$(firewall-cmd --get-default-zone 2>/dev/null || true)
+    echo "$z"
+}
+ks_fw_list() { # sources|ports ZONE runtime|permanent   — one per line: 10.9.0.0/16, 80/tcp
+    local what=$1 zone=$2 where=$3 fn=getSources path out='' w odd=''
+    [[ $what == ports ]] && fn=getPorts
+    if command -v busctl >/dev/null 2>&1; then
+        if [[ $where == runtime ]]; then
+            out=$(ks_fw_bus /org/fedoraproject/FirewallD1 org.fedoraproject.FirewallD1.zone "$fn" s "$zone" || true)
+        else
+            path=$(ks_fw_bus /org/fedoraproject/FirewallD1/config org.fedoraproject.FirewallD1.config getZoneByName s "$zone" \
+                   | { grep -o '/org/[^"]*' || true; })
+            [[ -z $path ]] || out=$(ks_fw_bus "$path" org.fedoraproject.FirewallD1.config.zone "$fn" || true)
+        fi
+    fi
+    if [[ -n $out ]]; then
+        # as 2 "10.9.0.0/16" "172.128.0.0/24"  ·  aas 2 2 "80" "tcp" 2 "443" "tcp"  ·  a(ss) 2 "80" "tcp" "443" "tcp"
+        while read -r w; do
+            [[ -n $w ]] || continue
+            if [[ $what == ports ]]; then
+                if [[ -z $odd ]]; then odd=$w; else echo "$odd/$w"; odd=''; fi
+            else
+                echo "$w"
+            fi
+        done < <(ks_fw_words <<<"$out")
+        return 0
+    fi
+    local perm=(); [[ $where == permanent ]] && perm=(--permanent)
+    { firewall-cmd "${perm[@]}" --zone="$zone" --list-"$what" 2>/dev/null || true; } | tr ' ' '\n' | { grep . || true; }
+}
 ks_firewall_open() { # PORT/PROTO...
     if systemctl is-active -q firewalld 2>/dev/null; then
         # Each port into the permanent and the running configuration, and no reload: a reload
@@ -365,9 +405,10 @@ ks_firewall_open() { # PORT/PROTO...
         # (lemonaide, 27 Nov 2026).
         # Asked once what is open in each, then only what is missing is added: four questions a
         # port took twelve seconds of every apply on a machine with fifteen ports.
-        local p kept now
-        kept=" $(firewall-cmd --permanent --list-ports 2>/dev/null | tr '\n' ' ') "
-        now=" $(firewall-cmd --list-ports 2>/dev/null | tr '\n' ' ') "
+        local p kept now zone
+        zone=$(ks_fw_default_zone)
+        kept=" $(ks_fw_list ports "$zone" permanent | tr '\n' ' ') "
+        now=" $(ks_fw_list ports "$zone" runtime | tr '\n' ' ') "
         for p in "$@"; do
             [[ $kept == *" $p "* ]] || firewall-cmd -q --permanent --add-port="$p"
             [[ $now == *" $p "* ]] || firewall-cmd -q --add-port="$p"
@@ -391,13 +432,15 @@ ks_firewall_trust_stack() { # the stack network stays a trusted source, whoever 
     # netavark adds it to the running configuration only, when a container starts: a reload
     # (ours once, a package's, a person's) forgot it until the next start. Kept in the permanent
     # one too; and put back into the running one, which repairs a machine a reload already hit.
-    local s
+    local s kept now
+    kept=" $(ks_fw_list sources trusted permanent | tr '\n' ' ') "
+    now=" $(ks_fw_list sources trusted runtime | tr '\n' ' ') "
     while read -r s; do
         [[ -n $s ]] || continue
-        firewall-cmd -q --permanent --zone=trusted --query-source="$s" \
+        [[ $kept == *" $s "* ]] \
             || { ks_say "firewalld: the stack network $s stays trusted across a reload"
                  firewall-cmd -q --permanent --zone=trusted --add-source="$s"; }
-        firewall-cmd -q --zone=trusted --query-source="$s" || firewall-cmd -q --zone=trusted --add-source="$s"
+        [[ $now == *" $s "* ]] || firewall-cmd -q --zone=trusted --add-source="$s"
     done < <(ks_stack_subnets)
 }
 
@@ -418,7 +461,10 @@ ks_firewall_trust_mesh() { # the mesh is as trusted as the stack network itself
         'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/91-kiwi-mesh.conf
     sysctl -q -w net.bridge.bridge-nf-call-iptables=1 2>/dev/null || true
     systemctl is-active -q firewalld 2>/dev/null || return 0
-    if ! firewall-cmd -q --zone=trusted --query-source="$KS_STACK_MESH_SUBNET" 2>/dev/null; then
+    ks_fw_trust_mesh_source
+}
+ks_fw_trust_mesh_source() {
+    if [[ " $(ks_fw_list sources trusted runtime | tr '\n' ' ') " != *" $KS_STACK_MESH_SUBNET "* ]]; then
         ks_say "firewalld: the mesh $KS_STACK_MESH_SUBNET is trusted like the stack network"
         firewall-cmd -q --permanent --zone=trusted --add-source="$KS_STACK_MESH_SUBNET"
         firewall-cmd -q --zone=trusted --add-source="$KS_STACK_MESH_SUBNET"

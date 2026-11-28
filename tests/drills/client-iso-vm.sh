@@ -140,6 +140,15 @@ if not new:
     sys.exit("the fleet file could not be changed in place")
 util.write_text(path, new, 0o600)' "$fleet" "$name" "$ring" && "$KIWI" control push "$fleet" >/dev/null 2>&1
     check $? "$name's disk is to open by the network's ring $ring"
+    # the computer got its agent from the control node, which may run an older kiwi-server than this
+    # checkout: KIWI_AGENT=checkout (the default) puts this checkout's agent and facts on it first
+    if [ "${KIWI_AGENT:-checkout}" = checkout ]; then
+        PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent as c; print(c.SCRIPT % {"dir": c.DIR, "version": c.VERSION}, end="")' \
+            | vssh "sudo install -m 0755 /dev/stdin /usr/local/sbin/kiwi-client-agent" \
+        && PYTHONPATH="$here/lib" python3 -c 'from kiwiserver import clientagent as c; print(c.FACTS % {"version": c.VERSION}, end="")' \
+            | vssh "sudo install -m 0600 /dev/stdin /etc/kiwi-client/facts.sh"
+        check $? "this checkout's agent on it"
+    fi
     "$KIWI" control order "$fleet" "$name" profile >/dev/null 2>&1
     n=24; while [ "$n" -gt 0 ]; do vssh "grep -qx 'unlock waits' /run/kiwi-client/status" 2>/dev/null && break; vssh "sudo kiwi-client-agent now" >/dev/null 2>&1; sleep 5; n=$((n - 1)); done
     [ "$n" -gt 0 ]; check $? "its agent says the disk waits to be bound"

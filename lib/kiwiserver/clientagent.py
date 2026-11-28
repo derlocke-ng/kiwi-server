@@ -23,7 +23,7 @@ NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FRESH = 150         # seconds a report counts as how the computer is now
 SKEW = 300
 LIMIT = 64 * 1024
-VERSION = 5
+VERSION = 6
 ORDERS = ("update", "profile")     # what a client's agent takes; nothing else, never a command
 
 FACTS = r'''
@@ -277,6 +277,19 @@ desktop() {     # PROFILE: a managed computer's GNOME settings, and the ones its
     [ "$(cat /etc/dconf/db/local.d/locks/50-kiwi 2>/dev/null)" = "$locks" ] || { printf '%%s\n' "$locks" > /etc/dconf/db/local.d/locks/50-kiwi; changed=1; }
     if [ -n "$changed" ]; then dconf update && say "its desktop settings are the network's now (dconf, locked: $(printf '%%s' "$locks" | grep -c .))"; fi
 }
+killswitch() {  # POLICY: kiwi-killswitch's network file (the modes, the network's gateways); it enforces it
+    local want=$1
+    if [ -z "$want" ]; then
+        if [ -f "$st/killswitch.sum" ]; then rm -f /etc/kiwi-killswitch/network.json "$st/killswitch.sum"; say "the kill switch's network policy is gone"; fi
+        return 0
+    fi
+    [ "$(printf '%%s' "$want" | sha256sum | cut -d' ' -f1)" = "$(cat "$st/killswitch.sum" 2>/dev/null)" ] && [ -s /etc/kiwi-killswitch/network.json ] && return 0
+    mkdir -p -m 0755 /etc/kiwi-killswitch
+    printf '%%s\n' "$want" > /etc/kiwi-killswitch/network.json.new && chmod 0644 /etc/kiwi-killswitch/network.json.new \
+        && mv -f /etc/kiwi-killswitch/network.json.new /etc/kiwi-killswitch/network.json
+    printf '%%s' "$want" | sha256sum | cut -d' ' -f1 > "$st/killswitch.sum"
+    say "the kill switch's network policy is in place$([ -x /usr/local/sbin/kiwi-killswitchd ] || echo ' (kiwi-killswitch is not installed: kiwi install kiwi-killswitch)')"
+}
 apply() {       # PROFILE: the network's CA into the system's trust, the VPN as a NetworkManager connection
     local p=$1 ca f upd vpn con mode search tmp
     ca=$(sed -n 's/^ca //p' "$p" | base64 -d 2>/dev/null)
@@ -291,6 +304,7 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
     unlocked "$(sed -n 's/^unlock //p' "$p" | base64 -d 2>/dev/null)"
     if [ "$(sed -n 's/^kind //p' "$p")" = managed ]; then echo managed > "$st/kind"; managed "$p"; software "$p"; desktop "$p"
     else rm -f "$st/kind"; fi
+    killswitch "$(sed -n 's/^killswitch //p' "$p" | base64 -d 2>/dev/null)"
     con=$(sed -n 's/^connection //p' "$p"); vpn=$(sed -n 's/^vpn //p' "$p")
     if [ -z "$vpn" ]; then      # none (any more): a connection this agent made goes
         if [ -f "$st/vpn.sum" ] && [ -n "$con" ]; then nmcli connection delete "$con" >/dev/null 2>&1; rm -f "$st/vpn.sum"; say "its VPN connection $con is gone: the profile has none"; fi
@@ -309,7 +323,9 @@ apply() {       # PROFILE: the network's CA into the system's trust, the VPN as 
         printf '%%s' "$vpn" | sha256sum | cut -d' ' -f1 > "$st/vpn.sum"; echo "$con" > "$st/vpn.name"
         say "its VPN connection $con is made"
     fi
-    if [ "$mode" = full ]; then     # everything through the VPN, every name asked there
+    if [ -x /usr/local/sbin/kiwi-killswitchd ] && [ -s /etc/kiwi-killswitch/network.json ]; then
+        :   # kiwi-killswitch owns the connection's routing: the mode its person or the network chose
+    elif [ "$mode" = full ]; then     # everything through the VPN, every name asked there
         nmcli connection modify "$con" ipv4.never-default no ipv4.dns-search "~." ipv6.method disabled connection.autoconnect yes
     else                            # only the network: its names to its DNS, the Internet as it was
         nmcli connection modify "$con" ipv4.never-default yes ipv4.dns-search "$search" ipv6.method disabled connection.autoconnect yes
@@ -623,6 +639,63 @@ def managed_of(block, accounts_url):
             "dconf": dconf_files(block)}
 
 
+MODES = ("vpn", "split", "dns", "off")      # kiwi-killswitch's, with the network's file (docs/design/clients.md)
+MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+def killswitch_policy(network, conn, block, conf_text, gateways, domains):
+    """kiwi-killswitch's /etc/kiwi-killswitch/network.json for a client with a place on the VPN: the
+    modes it may use and its default (`network_modes`, `network_mode` in its block; a managed one is
+    fixed), the network's gateways that stand in for the VPN on their LAN ([{name, ip, macs}]), its
+    resolvers and VPN subnets as its VPN config names them. None without a VPN config."""
+    import ipaddress
+    if not conf_text:
+        return None
+    managed = str((block or {}).get("kind") or "") == "managed"
+    modes = block.get("network_modes") or (["vpn"] if managed else list(MODES))
+    modes = [modes] if isinstance(modes, str) else [str(m) for m in modes]
+    if not modes or any(m not in MODES for m in modes):
+        raise KiwiError("network_modes: some of %s" % ", ".join(MODES))
+    modes = [m for m in MODES if m in modes]
+    default = str(block.get("network_mode") or ("vpn" if managed or "split" not in modes else "split"))
+    if default not in modes:
+        raise KiwiError("network_mode %s is not one of network_modes (%s)" % (default, ", ".join(modes)))
+    dns, mesh, address = [], [], None
+    for line in conf_text.splitlines():
+        key, _eq, value = line.partition("=")
+        key, value = key.strip().lower(), value.strip()
+        if key == "dns":
+            dns += [v.strip() for v in value.split(",") if v.strip()]
+        elif key == "allowedips":
+            mesh += [v.strip() for v in value.split(",") if v.strip() and not v.strip().endswith("/0")]
+        elif key == "address" and not address:
+            address = value.split(",")[0].strip()
+    if not mesh and address:        # a config for everything names no subnet: the one of its own address
+        mesh = [str(ipaddress.ip_interface(address).network.supernet(new_prefix=16))]
+    mesh = [str(ipaddress.ip_network(m, strict=False)) for m in mesh if ":" not in m]
+    dns = [str(ipaddress.ip_address(d)) for d in dns if ":" not in d]
+    return {"version": 1, "network": network, "vpn": conn, "modes": modes, "default": default, "locked": managed,
+            "gateways": [g for g in gateways if g.get("macs")], "dns": dns, "mesh": mesh, "domains": list(domains)}
+
+
+def gateways_of(hosts, mac_of):
+    """The network's gateways for a client's kill switch: each machine with the gateway module at its
+    fixed LAN address, and each moving address with the MACs of every machine that may hold it.
+    `hosts`: [(name, modules, lan address, vip address)]; `mac_of(name)`: its last reported MAC."""
+    out, moving = [], {}
+    for name, modules, lan, vip in hosts:
+        mac = (mac_of(name) or "").lower()
+        if not MAC.match(mac):
+            continue
+        if "gateway" in modules and lan:
+            out.append({"name": "%s's gateway" % name, "ip": lan, "macs": [mac]})
+        if "vip" in modules and vip:
+            moving.setdefault(vip, []).append(mac)
+    for ip, macs in sorted(moving.items()):
+        out.append({"name": "the moving address %s" % ip, "ip": ip, "macs": sorted(set(macs))})
+    return out
+
+
 DCONF_PATH = re.compile(r"^[a-z0-9][a-z0-9.-]*(/[a-zA-Z0-9.-]+)+$")
 DCONF_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -655,7 +728,7 @@ def dconf_files(block):
     return "\n".join(out) + "\n", "\n".join(lock_lines) + ("\n" if lock_lines else "")
 
 
-def profile(fleet, name, linked=(), unlock=None, managed=None):
+def profile(fleet, name, linked=(), unlock=None, managed=None, gateways=()):
     """The client's profile, as the agent reads it: one fact a line. The network's CA; its VPN (a
     WireGuard config, as NetworkManager imports it) when it has a place on the VPN, with how much
     goes through it: `split` only the network (its names to its DNS, the Internet as it was), `full`
@@ -675,6 +748,13 @@ def profile(fleet, name, linked=(), unlock=None, managed=None):
         full = any(re.match(r"\s*AllowedIPs\s*=.*\b0\.0\.0\.0/0", line) for line in data.decode(errors="replace").splitlines())
         lines += ["vpn " + base64.b64encode(data).decode(), "vpn_mode " + ("full" if full else "split"),
                   "search " + ",".join(["~" + domain] + ["~" + d for d in sorted(set(linked)) if d and d != domain])]
+    if os.path.isfile(conf):    # its kill switch's policy (kiwi-killswitch): the modes, the network's gateways
+        import json
+        block = names(fleet).get(name) or {}
+        policy = killswitch_policy(re.sub(r"[^a-z0-9-]", "", domain.split(".")[0].lower()), connectmod.connection_name(domain), block,
+                                   util.read_text(conf), list(gateways), [domain] + [d for d in sorted(set(linked)) if d and d != domain])
+        if policy:
+            lines.append("killswitch " + base64.b64encode(json.dumps(policy, sort_keys=True).encode()).decode())
     if managed:         # a managed computer: logins with the network's accounts, sudo for its admins
         lines += ["kind managed", "accounts " + managed["accounts"], "login_groups " + ",".join(managed["login"]),
                   "admin_groups " + ",".join(managed["admins"]), "lock_software " + ("yes" if managed.get("lock", True) else "no")]

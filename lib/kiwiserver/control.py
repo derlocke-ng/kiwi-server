@@ -2360,7 +2360,13 @@ class Control:
             linked = [fedmod.seen(x)[1] for x in fedmod.partners(fleet.dir).values() if fedmod.seen(x)[1] and fedmod.seen(x)[1] != domain]
             block = clientagent.names(fleet).get(name) or {}
             managed = clientagent.managed_of(block, self._accounts_url(fleet)) if block.get("kind") == "managed" else None
-            body = clientagent.profile(fleet, name, linked, self._client_unlock(fleet, name), managed)
+            hosts = []
+            for h in fleet.hosts.values():
+                node = h.cfg.get(h.role) or {}
+                hosts.append((h.name, node.get("modules") or [], str((h.cfg.get("network") or {}).get("address") or "").split("/")[0],
+                              str((node.get("vip") or {}).get("address") or "").split("/")[0]))
+            gateways = clientagent.gateways_of(hosts, lambda n: self._last_fact(n, "mac"))
+            body = clientagent.profile(fleet, name, linked, self._client_unlock(fleet, name), managed, gateways)
             return {"body": body.decode(), "sum": hashlib.sha256(body).hexdigest()}
         got = self._read_once("client-profile:" + name, make)
         return got["body"].encode(), got["sum"]
@@ -2510,6 +2516,16 @@ class Control:
         self.audit("control", "the computer %s fetched its agent" % name)
         return clientagent.join_script(fleet, name, machineagent.url(fleet, self._modules()),
                                        util.read_text(fleet.resolve_path("secrets/ca/kiwiCA.pem")))
+
+    def _last_fact(self, host, key):
+        """One fact of a machine's last report, however old ("" when it never said it)."""
+        try:
+            for line in util.read_text(os.path.join(self.reports_dir, host + ".txt")).splitlines():
+                if line.startswith(key + "="):
+                    return line[len(key) + 1:].strip()
+        except OSError:
+            pass
+        return ""
 
     def _accounts_url(self, fleet):
         """Where the network's accounts are (the machine with the accounts module), or None."""

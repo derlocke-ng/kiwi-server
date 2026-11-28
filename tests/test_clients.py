@@ -82,6 +82,8 @@ class TestClientProfileAndOrders(unittest.TestCase):
                        .replace("/etc/sudoers.d", self.t + "/sys/sudoers.d")
                        .replace("/etc/polkit-1", self.t + "/sys/polkit-1")
                        .replace("/etc/dconf", self.t + "/sys/dconf")
+                       .replace("/etc/kiwi-killswitch", self.t + "/sys/kiwi-killswitch")
+                       .replace("/usr/local/sbin/kiwi-killswitchd", self.t + "/bin/kiwi-killswitchd")
                        .replace("/run/kiwi-client", self.t + "/run/kiwi-client"))
         for path in ("/etc/", "/usr/local/share", "/var/lib/"):
             self.assertNotIn(path, self.script.replace(self.t, ""), "a system path left in the script under test")
@@ -351,6 +353,51 @@ class TestClientProfileAndOrders(unittest.TestCase):
                     {"desktop_locks": ["not a key"]}, {"desktop_settings": {"org/gnome/x": {"a": "1\n[evil]"}}}):
             with self.assertRaises(KiwiError):
                 clientagent.dconf_files(bad)
+
+    def test_the_kill_switch_policy(self):
+        conf = "[Interface]\nAddress = 10.9.0.40/32\nDNS = 10.9.0.1\n[Peer]\nAllowedIPs = 10.9.0.0/16, 10.20.0.0/16\n"
+        gws = [{"name": "the moving address 192.168.2.69", "ip": "192.168.2.69", "macs": ["aa:bb:cc:dd:ee:01"]}]
+        p = clientagent.killswitch_policy("home", "kiwi-home", {}, conf, gws, ["home"])
+        self.assertEqual(p, {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["vpn", "split", "dns", "off"],
+                             "default": "split", "locked": False, "gateways": gws, "dns": ["10.9.0.1"],
+                             "mesh": ["10.9.0.0/16", "10.20.0.0/16"], "domains": ["home"]})
+        m = clientagent.killswitch_policy("home", "kiwi-home", {"kind": "managed"}, conf.replace("10.9.0.0/16, 10.20.0.0/16", "0.0.0.0/0"), [], ["home"])
+        self.assertEqual((m["modes"], m["default"], m["locked"], m["mesh"]), (["vpn"], "vpn", True, ["10.9.0.0/16"]))
+        self.assertEqual(clientagent.killswitch_policy("h", "k", {"network_modes": ["off", "vpn"], "network_mode": "off"}, conf, [], [])["modes"],
+                         ["vpn", "off"])
+        with self.assertRaisesRegex(KiwiError, "not one of network_modes"):
+            clientagent.killswitch_policy("h", "k", {"network_modes": ["vpn"], "network_mode": "off"}, conf, [], [])
+        with self.assertRaisesRegex(KiwiError, "network_modes"):
+            clientagent.killswitch_policy("h", "k", {"network_modes": ["tor"]}, conf, [], [])
+        self.assertIsNone(clientagent.killswitch_policy("h", "k", {}, "", [], []))
+
+    def test_the_networks_gateways_with_every_mac_of_the_moving_address(self):
+        hosts = [("papaya", ["gateway", "vip"], "192.168.2.30", "192.168.2.69"), ("lime", ["gateway", "vip"], "192.168.2.64", "192.168.2.69"),
+                 ("quince", ["gateway"], "192.168.2.62", ""), ("sorbet", ["vpn-server"], "", ""), ("medlar", ["gateway"], "192.168.2.63", "")]
+        macs = {"papaya": "AA:00:00:00:00:30", "lime": "aa:00:00:00:00:64", "quince": "aa:00:00:00:00:62", "medlar": "nonsense"}
+        got = clientagent.gateways_of(hosts, macs.get)
+        self.assertEqual(got[-1], {"name": "the moving address 192.168.2.69", "ip": "192.168.2.69",
+                                   "macs": ["aa:00:00:00:00:30", "aa:00:00:00:00:64"]})
+        self.assertIn({"name": "quince's gateway", "ip": "192.168.2.62", "macs": ["aa:00:00:00:00:62"]}, got)
+        self.assertNotIn("medlar", str(got))                               # no MAC known: not trusted
+
+    def test_the_agent_writes_the_kill_switchs_policy_and_leaves_it_the_routing(self):
+        import base64
+        import hashlib
+        import json
+        policy = {"version": 1, "network": "home", "vpn": "kiwi-home", "modes": ["vpn", "split"], "default": "split"}
+        body = self.profile.decode().replace("network home", "network home\nkillswitch " +
+                                              base64.b64encode(json.dumps(policy).encode()).decode(), 1).encode()
+        self.w("profile", body.decode())
+        self.w("profile.sign", clientagent.profile_signature(KEY, "desk", body))
+        self.answer("profile " + hashlib.sha256(body).hexdigest())
+        os.makedirs(os.path.join(self.t, "sys"), exist_ok=True)
+        self.w("bin/kiwi-killswitchd", "exit 0\n", 0o755)               # installed: it owns the routing
+        self.run_agent()
+        self.assertEqual(json.loads(self.read("sys/kiwi-killswitch/network.json")), policy)
+        self.assertEqual(oct(os.stat(os.path.join(self.t, "sys", "kiwi-killswitch", "network.json")).st_mode & 0o777), "0o644")
+        self.assertNotIn("ipv4.never-default", self.read("nm"))            # the agent leaves the routing to it
+        self.assertIn("connection up kiwi-home", self.read("nm"))
 
     def test_managed_of_reads_the_block(self):
         self.assertIsNone(clientagent.managed_of({}, "https://id.x"))

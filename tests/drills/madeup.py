@@ -10,7 +10,7 @@ GB = 1048576
 
 
 def facts(load, cpus, mem, disks, running, backup=None, up=400000):
-    f = {"applied": "2026-11-15T06:10:00+00:00", "role_failed": "", "box": "", "kernel": "6.17.7-200.fc43.x86_64", "clock_synced": True,
+    f = {"applied": "2026-11-15T06:10:00+00:00", "role_failed": "", "box": "", "mac": "", "kernel": "6.17.7-200.fc43.x86_64", "clock_synced": True,
          "clock_back": None, "fragmented": None, "skew": 0, "reboot": False, "failed_units": [], "secureboot_ca_missing": False, "kiwi_units": [{"name": "kiwi-stack-update", "active": "inactive", "sub": "dead"}, {"name": "kiwi-runbook", "active": "inactive", "sub": "dead"}], "runtime": "podman", "opened": {}, "partner_masters": {},
          "os": "Fedora CoreOS 43", "uptime": up, "load": [load, load, load], "cpus": cpus,
          "memory": {"total": mem[0] * GB, "available": int((mem[0] - mem[1]) * GB)},

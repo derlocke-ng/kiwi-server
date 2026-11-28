@@ -30,6 +30,10 @@ fi
 (. /etc/os-release 2>/dev/null; kv os "${PRETTY_NAME:-}")
 # the box, summed as the network's clients sum theirs (docs/design/clients.md): a person's system
 # booted on this hardware (a pentest SSD) is shown on it. Only with the agent's salt: x86 boards
+# the card it reaches the world by, as its LAN sees it: a client's kill switch trusts a gateway of
+# the network by its address and this (kiwi-killswitch, docs/design/clients.md)
+dev=$(ip -o route get 1.1.1.1 2>/dev/null | grep -o 'dev [^ ]*' | cut -d' ' -f2)
+[ -n "$dev" ] && [ -r "/sys/class/net/$dev/address" ] && kv mac "$(cat "/sys/class/net/$dev/address")"
 uuid=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr -d ' \n' | grep -viE '^[0-]*$|^[f-]*$')
 if [ -r /etc/kiwi-server/agent/salt ] && [ -n "$uuid" ]; then
     kv box "$(printf '%s\n%s' "$(cat /etc/kiwi-server/agent/salt)" "$uuid" | sha256sum | cut -c1-16)"
@@ -330,6 +334,7 @@ def parse(data, local_now=None):
         "role_failed": raw.get("role_failed", ""),
         "os": raw.get("os", ""),
         "box": raw.get("box", ""),
+        "mac": raw.get("mac", ""),
         "kernel": raw.get("kernel", ""),
         "uptime": _int(raw.get("uptime")),
         "load": [float(x) for x in load] if len(load) == 3 else [],

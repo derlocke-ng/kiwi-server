@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.330.0 — people's computers joined, kept and updated by the network
+
+- **Clients** (docs/machines.md, "People's computers"): *Add a computer* on the Devices page
+  (or `kiwi-server client add NAME --vpn`, `client invite`) shows one command to run on the
+  computer. It works once, within a day, carries the network's CA, and puts the agent on it;
+  kiwi-server need not be on that computer. The agent now also applies the computer's
+  profile, signed with its key: the network's CA in the system's trust store, and its place on
+  the VPN as a NetworkManager connection (`kiwi-<domain>`) that comes up by itself, with only
+  the network's names asked there (or everything through the VPN, `--full`). It takes two
+  orders, *Update now* (rpm-ostree or apt) and *Apply its profile*: buttons on the Devices
+  page, or `kiwi-server control order FLEET NAME update|profile`. The page lists the computers
+  that report, with the machine of the network whose hardware each one runs on (machines now
+  report the same salted sum of their board's id; a board without an id of its own has none).
+  The control page takes all of it under `/api/client/` from every VPN group and from home
+  (kiwi-modules 0.143.0). Drill: `tests/drills/client-agent-vm.sh` on the Debian desktop VM; its
+  report part passed twice before this release, the join, the profile and the orders need a
+  control node of this release and run after it.
+- `client list` works (2.329.0 lacked an import); `client remove` takes the computer off the
+  VPN too, and the last one takes the `clients:` block along.
+- **The lean AI**: `ai load` says whether the model went onto the graphics card, partly, or to
+  the processor (llama.cpp's log), and what helps (`ai.card_free_mb`, a smaller model). The
+  fleet's model is found when llama.cpp lists its quant by the end of the name (`UD-Q4_K_S` as
+  `Q4_K_S`; kiwi-modules 0.142.0).
+
 ## 2.329.0 — people's computers report to the network
 
 - **Clients** (docs/design/clients.md, the first step): a person's computer (a desktop, a
